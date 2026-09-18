@@ -22,17 +22,25 @@
 
 ## 1. native-obfuscator fork 发 **v1.4.8**
 
-- [ ] `native-obfuscator/obfuscator/src/main/java/by/radioegor146/Main.java` 的
+- [x] `native-obfuscator/obfuscator/src/main/java/by/radioegor146/Main.java` 的
       `VERSION` 常量:`1.4.7` → `1.4.8`
-- [ ] `MODIFICATIONS.md` 追加一条(本轮改动:`--loader-name` / `--hidden-name`,
+- [x] `MODIFICATIONS.md` 追加一条(本轮改动:`--loader-name` / `--hidden-name`,
       合成隐藏类去掉 `hidden` 子包)
-- [ ] `git tag -a v1.4.8 -F -` 然后 **只推这一个标签**
-      ⚠️ 绝不 `git push --tags` —— 远端有 22 个上游历史标签,会各建一个 Release
-- [ ] 发布后验证:下载产物跑 `--help`,能看见 `--loader-name` / `--hidden-name`
+- [x] `git tag -a v1.4.8 -F -` 然后 **只推这一个标签**
+      ⚠️ 绝不 `git push --tags` —— 本地有 29 个上游历史标签,会各建一个 Release
+- [x] 发布后验证:下载产物跑 `--help`,能看见 `--loader-name` / `--hidden-name`
 
-> **为什么必须先做**:本地重建的 jar 版本号仍是 `1.4.7`,与 GitHub latest 同号,
-> 更新检查不会重下 ⇒ **用户机器上拿到的还是旧版**(没有命名随机化,
-> 两个加壳插件装一起必 `LinkageError`)。
+> **实际结果**(2026-09-18):`master = 4e92b2a`,标签 `v1.4.8` → `4e92b2a`,
+> CI 一次通过。资产:`native-obfuscator-v1.4.8.zip`(2.5 MB,内含
+> `native-obfuscator.jar` + `LICENSE`/`NOTICE`/`README.md`/`MODIFICATIONS.md`,
+> 满足 GPL 分发要求)、`native-obfuscator-v1.4.8-src.zip`、`SHA256SUMS.txt`。
+> 实测 jar 的 `--version` 报 `1.4.8`,与标签号一致。
+
+> ⚠️ **仍然待办**:AntiHackerX **没有**版本过期检查 —— 它只在
+> `libs/native-obfuscator.jar` 不存在时才下载(`runtime_bootstrap.cpp` 里
+> `if (QFileInfo(m_jarPath).size() > 0) { 跳过 }`)。所以**已经用过旧版的用户
+> 不会自动升级**,得先实现「取 `tag_name` 与本地 `--version` 比对、不一致就重下」。
+> (`Main.java` 的注释声称有这个对比,那是早期设想,与现状不符。)
 
 ## 2. 决定 fork 归属,并同步下载地址
 
@@ -43,9 +51,13 @@
 36:  https://github.com/xiaofanforfabric/native-obfuscator/releases
 ```
 
-- [ ] 决策:fork 留个人账号 / 搬进组织
-- [ ] 若搬进组织:上面两处同步改
-- [ ] 重新验证整条链路:清空 `libs/`,启动一次,确认能自动下载 + 更新检测正常
+- [x] 决策:**fork 留在个人账号**(`xiaofanforfabric/native-obfuscator`)
+      ⇒ 两处 URL **无需改动**,`releases/latest` 已指向 v1.4.8
+- [x] —(不适用:不搬组织)
+- [ ] **补版本过期检查**(见第 1 节的待办):现在清空 `libs/` 能自动下载新版,
+      但**已有旧 jar 的机器不会重下** —— 这个必须实现,否则老用户升了个寂寞
+- [ ] 顺带把 `kFallbackReleaseTag` 从 `v1.4.0` 更新(API 限流时会回退到它,
+      而 v1.4.0 还没有命名随机化)
 
 ## 3. 建 GitHub 组织与仓库
 
