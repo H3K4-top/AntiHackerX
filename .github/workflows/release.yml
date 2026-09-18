@@ -79,8 +79,12 @@ jobs:
       - name: 安装依赖
         run: |
           sudo apt-get update
+          # libgl1-mesa-dev 不能省(qt6-base-dev 只是"推荐"它,--no-install-recommends
+          # 装的话会缺 GL/gl.h):Qt6Gui 的 FindWrapOpenGL.cmake 会 find_package(OpenGL),
+          # 失败就导致 Qt6Widgets → Qt6Gui → Qt6 全部 NOT FOUND,配置阶段直接挂。
           sudo apt-get install -y --no-install-recommends \
-            qt6-base-dev zlib1g-dev cmake ninja-build g++ binutils tar
+            qt6-base-dev zlib1g-dev cmake ninja-build g++ binutils tar \
+            libgl1-mesa-dev
 
       - name: 配置
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
