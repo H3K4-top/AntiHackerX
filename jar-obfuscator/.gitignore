@@ -1,0 +1,51 @@
+# Build output
+**/target/
+**/build/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+
+# Python test cache
+__pycache__/
+*.py[cod]
+
+# IntelliJ IDEA
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# Eclipse
+.apt_generated/
+.classpath
+.factorypath
+.project
+.settings/
+.springBeans
+.sts4-cache
+
+# NetBeans
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+# VS Code
+.vscode/
+
+# Operating-system files
+.DS_Store
+
+# Local tool output
+/log/
+/cmake-*/
+/code-encryptor-temp/
+/jar-obfuscator-temp/
+/test/.work/
+
+# AntiHackerX fork 扩展
+# 混淆映射表含原始类名/方法签名,属于敏感产物,绝不能进版本库
+*.mapping.txt
+# 本地 javac 构建产物(mvn 装好后可删)
+build/

@@ -1,0 +1,42 @@
+<!DOCTYPE RCC>
+<!--
+  AntiHackerX 验证模块 —— 内嵌资产清单
+
+  本文件列出"会被打包器内嵌进可执行文件"的源文件。打包时按需释放到
+  <打包器目录>/<输入JAR名>+Verify/ 下,供 javac 编译并注入到目标 JAR。
+
+  注意:这里只列验证模块自身(守卫 + 解密运行时 + 入口模板)。
+  演示/测试用的 unpassMain、VerifyMain、CopyrightNotice 不属于本模块,不在此列。
+
+  alias 用来把资源路径固定成 :/verify/<alias>,这样打包器里那张表不必关心
+  宿主工程的实际目录层级。
+-->
+<RCC>
+    <qresource prefix="/verify">
+        <!-- 防护守卫 -->
+        <file alias="java/top/h3k4/VirtualMachineGuard.java">src/main/java/top/h3k4/VirtualMachineGuard.java</file>
+        <file alias="java/top/h3k4/AgentGuard.java">src/main/java/top/h3k4/AgentGuard.java</file>
+        <file alias="java/top/h3k4/DebugTimerGuard.java">src/main/java/top/h3k4/DebugTimerGuard.java</file>
+
+        <!-- 解密运行时 -->
+        <file alias="java/top/h3k4/AhxPayload.java">src/main/java/top/h3k4/AhxPayload.java</file>
+        <file alias="java/top/h3k4/AhxRuntime.java">src/main/java/top/h3k4/AhxRuntime.java</file>
+
+        <!-- 反篡改:完整性签名校验(ECDSA P-256 over 全部非类文件) -->
+        <file alias="java/top/h3k4/AhxSignature.java">src/main/java/top/h3k4/AhxSignature.java</file>
+
+        <!-- 启动时的加壳版权提示。无桌面环境(服务器)时自动退化成日志输出。 -->
+        <file alias="java/top/h3k4/CopyrightNotice.java">src/main/java/top/h3k4/CopyrightNotice.java</file>
+
+        <!-- 入口模板 -->
+        <file alias="templates/Bootstrap.java.tmpl">templates/Bootstrap.java.tmpl</file>
+        <file alias="templates/PluginBootstrap.java.tmpl">templates/PluginBootstrap.java.tmpl</file>
+
+        <!-- 最终打包器(单文件源码启动:java AhxPacker.java ...)
+             内嵌一份是为了让发布版不依赖源码树 —— 用户机器上没有
+             AntiHackerXVerify/tools/ 这个目录。 -->
+        <file alias="tools/AhxPacker.java">tools/AhxPacker.java</file>
+        <!-- 签名密钥生成。和 AhxPacker 一样是单文件源码启动,不依赖源码树。 -->
+        <file alias="tools/AhxSign.java">tools/AhxSign.java</file>
+    </qresource>
+</RCC>

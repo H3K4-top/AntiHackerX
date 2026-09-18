@@ -1,0 +1,43 @@
+/*
+ * 由 AntiHackerX 打包器根据配置自动生成 —— 请勿手工修改。
+ *
+ * 生成时间 : {{TIMESTAMP}}
+ * 输入 JAR : {{INPUT_JAR}}
+ */
+{{PACKAGE_LINE}}
+{{IMPORTS}}
+/**
+ * 加壳入口(普通 JAR / Spring Boot 这类有 main 入口的程序)。
+ *
+ * <p>按打包时的配置依次装配防护模块,然后解密并拉起原程序入口。</p>
+ */
+public final class {{CLASS}} {
+
+    /**
+     * 载荷密钥的三个分片(打包时随机生成,每份产物不同)。
+     * 任意单个分片单独看都是随机数据,文本扫描拿不到密钥。
+     */
+    private static final int[] S0 = {{SHARD0}};
+    private static final int[] S1 = {{SHARD1}};
+    private static final int[] S2 = {{SHARD2}};
+
+    /** 原程序入口(其字节码只以密文形式存在于 JAR 内) */
+    private static final String TARGET = "{{TARGET_CLASS}}";
+
+    /**
+     * 各包里那个「定义器」类。解密出来的类要靠它们定义进本程序自己的类加载器
+     * (Lookup#defineClass 要求同包 + 同类加载器),详见 AhxRuntime 的注释。
+     */
+    private static final String[] LINK = {{DEFINERS}};
+
+    private {{CLASS}}() {
+    }
+
+    public static void main(String[] args) throws Exception {
+{{GUARD_CALLS}}
+        // 初始化,再拉起原入口
+        top.h3k4.AhxRuntime.install(S0, S1, S2, LINK, {{CLASS}}.class.getClassLoader());
+        top.h3k4.AhxRuntime.invokeMain(TARGET, args);
+    }
+}
+

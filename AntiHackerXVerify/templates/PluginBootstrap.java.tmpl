@@ -1,0 +1,86 @@
+/*
+ * 由 AntiHackerX 打包器根据配置自动生成 —— 请勿手工修改。
+ *
+ * 生成时间 : {{TIMESTAMP}}
+ * 输入 JAR : {{INPUT_JAR}}
+ */
+{{PACKAGE_LINE}}
+{{IMPORTS}}
+import org.bukkit.plugin.java.JavaPlugin;
+
+/**
+ * 加壳后的 Paper 插件「桥」。
+ *
+ * <h3>它解决的是什么问题</h3>
+ *
+ * <p>服务端只允许一个 {@code JavaPlugin} 实例。Bukkit 的 {@code JavaPlugin}
+ * 构造器会把自己注册到 {@code PluginClassLoader} 上,而那个注册是<b>一次性</b>的:</p>
+ *
+ * <pre>
+ *   public synchronized void initialize(JavaPlugin plugin) {
+ *       if (this.plugin != null || this.pluginInit != null) {
+ *           throw new IllegalArgumentException("Plugin already initialized!");
+ *       }
+ *   }
+ * </pre>
+ *
+ * <p>其中 {@code plugin} 还是个 {@code final} 字段,靠反射硬改只会让服务端内部
+ * 状态劈叉。所以「入口继承 JavaPlugin、再 new 一个真实插件」这条路<b>根本走不通</b>:
+ * 第二个实例的构造器必然抛 "Plugin already initialized!"。</p>
+ *
+ * <h3>改成怎么做的</h3>
+ *
+ * <p>入口不再继承 {@code JavaPlugin} 去占那个名额,而是插在<b>真实主类和
+ * {@code JavaPlugin} 之间</b>:</p>
+ *
+ * <pre>
+ *   org.bukkit.plugin.java.JavaPlugin
+ *          ↑
+ *   本类(桥)                       &lt;- 只有静态初始化,干一件事:定义载荷类
+ *          ↑
+ *   真实插件主类(打包器把它的父类改到了本类上)
+ * </pre>
+ *
+ * <p>于是加载真实主类时,类初始化顺序天然保证:</p>
+ *
+ * <ol>
+ *   <li>先初始化它的父类,也就是本类 —— 静态块里把整个载荷解密并
+ *       {@code defineClass} 进<b>服务端自己的加载器</b>;</li>
+ *   <li>再执行 {@code JavaPlugin} 的构造器 —— 整个生命周期里<b>唯一</b>一次;</li>
+ *   <li>最后才轮到真实主类的构造器体,它引用的那些类此刻都已就位。</li>
+ * </ol>
+ *
+ * <p>真实主类本身以明文形式留在 JAR 里(服务端必须能直接加载并实例化它,
+ * 这一点无法回避),但它的方法体可以交给 native-obfuscator 搬进原生库。</p>
+ */
+public abstract class {{CLASS}} extends JavaPlugin {
+
+    /**
+     * 载荷密钥的三个分片(打包时随机生成,每份产物不同)。
+     * 任意单个分片单独看都是随机数据,文本扫描拿不到密钥。
+     */
+    private static final int[] S0 = {{SHARD0}};
+    private static final int[] S1 = {{SHARD1}};
+    private static final int[] S2 = {{SHARD2}};
+
+    /**
+     * 各包里那个「定义器」类。
+     *
+     * <p>关键:被加壳的插件类必须由<b>服务端自己的 PluginClassLoader</b> 定义,
+     * 否则 {@code JavaPlugin} 的构造器会抛
+     * "JavaPlugin requires to be created by a valid classloader." ——
+     * 它检查的是具体类,自己写一个 ClassLoader 是绕不过去的。
+     * 详见 AhxRuntime 的注释。</p>
+     */
+    private static final String[] LINK = {{DEFINERS}};
+
+    static {
+{{GUARD_CALLS}}
+        // 尽早定义载荷 —— 必须赶在子类(真实主类)的构造器之前完成,
+        // 否则它构造器里引用的那些类都会 NoClassDefFoundError。
+        top.h3k4.AhxRuntime.install(S0, S1, S2, LINK, {{CLASS}}.class.getClassLoader());
+    }
+
+    protected {{CLASS}}() {
+    }
+}

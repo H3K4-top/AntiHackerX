@@ -1,0 +1,88 @@
+# Java
+*.class
+*.jar
+!tools/*.jar
+*.war
+*.ear
+
+# Build outputs
+# 注意:测试数据在 testp/ 下,路径必须带 testp/ 前缀(原先写 test/... 是失效的)
+testp/test/sample-app/build/
+testp/test/obfuscated/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+
+# Native builds
+*.so
+*.dll
+*.dylib
+*.o
+*.a
+build/
+
+# 启动引导自动下载的运行时(便携版 JDK、依赖 jar、临时目录)
+# 这些都在首次启动时自动拉取,不该进版本库
+#
+# ⚠️ 必须锚定到仓库根(`/java/`),不能写 `java/`:
+# 未锚定的 `java/` 会连 AntiHackerXVerify/src/main/java/ 一起忽略掉。
+/java/
+/libs/
+.bootstrap-tmp/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+.project
+.classpath
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+*~
+
+# Logs
+*.log
+
+# ============================================================
+#  不纳入主项目的子项目 / 大体积目录
+# ============================================================
+
+# NOBF:native-obfuscator(GPL-3.0,独立 git 仓库,单独维护)
+native-obfuscator/
+
+# 测试/实验场:大体积测试数据(原始 JAR、转译输出、C++ 构建中间产物)
+testp/
+
+# ============================================================
+#  Gradle
+# ============================================================
+# 上面的 `*.jar` 会把 Gradle wrapper 也吃掉,但 gradlew 运行必须靠它
+# —— 没有它,克隆下来直接跑 `./gradlew` 会失败。
+#
+# ⚠️ 必须写成 `**/`(或去掉斜杠):含 `/` 的 ignore 模式是**锚定到仓库根**的,
+#    写成 `!gradle/wrapper/gradle-wrapper.jar` 只能匹配根目录下的那个,
+#    匹配不到 AntiHackerXVerify/gradle/wrapper/gradle-wrapper.jar。
+!**/gradle/wrapper/gradle-wrapper.jar
+.gradle/
+
+# ============================================================
+#  jar-obfuscator(MIT fork,源码随主仓库一起分发)
+# ============================================================
+# 源码要入库(否则克隆下来缺一个流水线步骤,工具跑不起来),
+# 但 target/ 是 Maven 构建产物,克隆后自己 `mvn package` 生成。
+jar-obfuscator/target/
+
+# ============================================================
+#  实验产物
+# ============================================================
+# NOBF 生成的"可编辑源工程"样例(FanVerify 实验留下的)
+FanVerify-obf/
+
