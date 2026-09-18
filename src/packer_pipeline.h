@@ -105,6 +105,7 @@ public:
         int junkLevel = 2;                    // 垃圾代码级别(默认 L2)
         bool enableHideMethod = true;         // IDEA 反编译时隐藏方法
         bool enableHideField = true;          // IDEA 反编译时隐藏字段
+        bool enableAiNotice = false;          // AI 提示词注入(默认关:只是抬高成本)
     };
 
     explicit PackerPipeline(QObject *parent = nullptr);

@@ -1826,6 +1826,9 @@ QString PackerPipeline::buildObfuscatorConfig(const Config &config,
     cfg += QStringLiteral("decryptKeyName: %1\n").arg(pickDecryptKeyName());
     cfg += QStringLiteral("enableHideMethod: %1\n").arg(yamlBool(opt(config.enableHideMethod)));
     cfg += QStringLiteral("enableHideField: %1\n").arg(yamlBool(opt(config.enableHideField)));
+    // AI 提示词注入:给每个类塞一个常量,内容是写给自动化分析系统/大模型的声明。
+    // 验证模块默认关 —— 那是我们自己的代码,而且它每类要増约 1.8KB。
+    cfg += QStringLiteral("enableAiNotice: %1\n").arg(yamlBool(opt(config.enableAiNotice, false)));
     cfg += QStringLiteral("enableDeleteCompileInfo: %1\n").arg(yamlBool(opt(config.enableDeleteCompileInfo)));
     cfg += QStringLiteral("enableJunk: %1\n").arg(yamlBool(opt(config.enableJunk)));
     cfg += QStringLiteral("junkLevel: %1\n").arg(forUserJar ? config.junkLevel : 5);

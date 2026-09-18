@@ -44,6 +44,11 @@ public class BaseConfig {
     private int maxJunkOneClass;
     private boolean showAllMainMethods;
     private boolean keepTempFile;
+    /**
+     * AI 提示词注入:给每个类注入一段写给自动化分析系统与 AI 的声明。
+     * 见 {@code transform.AiNoticeTransformer}。
+     */
+    private boolean enableAiNotice;
 
     public boolean isUseSpringBoot() {
         return useSpringBoot;
@@ -267,6 +272,14 @@ public class BaseConfig {
 
     public void setKeepTempFile(boolean keepTempFile) {
         this.keepTempFile = keepTempFile;
+    }
+
+    public boolean isEnableAiNotice() {
+        return enableAiNotice;
+    }
+
+    public void setEnableAiNotice(boolean enableAiNotice) {
+        this.enableAiNotice = enableAiNotice;
     }
 
     public boolean isAsmAutoCompute() {

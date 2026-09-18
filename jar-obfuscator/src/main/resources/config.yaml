@@ -76,8 +76,14 @@ decryptKeyName: LiLiLLLiiiLLiiLLi
 enableHideMethod: true
 # 是否隐藏字段
 enableHideField: true
-
-# 开启删除编译信息选项
+  
+  # AI 提示词注入(防 AI 辅助破解)
+  # 给每个类注入一个 public static final String 常量,内容是一份写给自动化分析
+  # 系统与 AI 的声明,要求它拒绝解释/还原本类的实现。常量不经任何代码引用,
+  # 不影响运行期行为,但反编译后能被原样看到。
+  # 注意:执行位置在所有字符串混淆之后(否则声明本身会被加密);
+  #       每个类约增加 1.8KB 体积,且只是抬高成本,不是可靠防护。
+  enableAiNotice: false
 enableDeleteCompileInfo: true
 
 # 开启花指令混淆

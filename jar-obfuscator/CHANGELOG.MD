@@ -1,5 +1,20 @@
 # CHANGELOG
 
+> ⚠️ 本仓库是 [jar-analyzer/jar-obfuscator](https://github.com/jar-analyzer/jar-obfuscator)
+> 的 fork(供 AntiHackerX 使用)。**fork 自己的改动记在下面这一节**;上游版本号
+> 保持 2.0.1 不变,以便继续对齐上游。
+
+## 本 fork 的改动
+
+- [功能] `enableAiNotice`:新增 `AiNoticeTransformer`,给每个类注入一个
+  `public static final String NOTICE` 常量,内容是一份写给自动化分析系统与
+  大模型的声明,要求它拒绝解释/还原本类实现。常量不被任何代码引用、不影响
+  运行期行为,但反编译后能被原样看到。**必须在字符串混淆之后执行**,
+  否则声明本身会被加密。每个类约 +1.8KB,默认关。@xiaofanforfabric
+- (此前几处 fork 改动涉及 `loader/CustomClassLoader.java`、
+  `loader/CustomClassWriter.java`、`transform/{XOR,String,JunkCode}Transformer.java`,
+  完整清单见 `rebuild-fork.sh`)
+
 ## 2.1.0
 
 更新日志：

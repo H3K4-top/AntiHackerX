@@ -27,12 +27,17 @@ THIN="target/jar-obfuscator-2.0.1.jar"
 SRC_ROOT="src/main/java"
 
 # fork 改动过的文件清单。加了新的改动就补在这里。
+#
+# 注意:改到 config/BaseConfig.java 或 core/Runner.java 这类"被到处引用"的类时,
+# 要把它们也传进来(例如 ./rebuild-fork.sh $SRC_ROOT/me/n1ar4/jar/obfuscator/core/Runner.java),
+# 只传新文件是不够的。
 FILES="
 $SRC_ROOT/me/n1ar4/jar/obfuscator/loader/CustomClassLoader.java
 $SRC_ROOT/me/n1ar4/jar/obfuscator/loader/CustomClassWriter.java
 $SRC_ROOT/me/n1ar4/jar/obfuscator/transform/XORTransformer.java
 $SRC_ROOT/me/n1ar4/jar/obfuscator/transform/StringTransformer.java
 $SRC_ROOT/me/n1ar4/jar/obfuscator/transform/JunkCodeTransformer.java
+$SRC_ROOT/me/n1ar4/jar/obfuscator/transform/AiNoticeTransformer.java
 "
 
 if [ $# -gt 0 ]; then

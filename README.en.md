@@ -263,6 +263,7 @@ To skip all of this, place `java/` and `libs/` next to the binary yourself.
 | Junk code | Inserts never-executed decoy instructions, strength L1–L9 | ⭐ on (L2) |
 | Hide methods from IDEA's decompiler | Writes special attributes so IDEA's decompiler cannot see them | ⭐ on |
 | Hide fields from IDEA's decompiler | Same, for fields | ⭐ on |
+| AI prompt injection | Injects a constant into every class — a notice addressed to AI/automated analysis systems asking them to refuse to explain the class. Only helps when code is pasted into a model; raises the cost, not a reliable protection. About +1.8 KB per class | off |
 
 ### Protection options
 

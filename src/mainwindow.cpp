@@ -428,6 +428,7 @@ void MainWindow::loadSettings() {
     restoreObf(chkObfJunk,          "ui/obf/junk", true);
     restoreObf(chkObfHideMethod,    "ui/obf/hideMethod", true);
     restoreObf(chkObfHideField,     "ui/obf/hideField", true);
+    restoreObf(chkObfAiNotice,      "ui/obf/aiNotice", false);
     if (cmbJunkLevel) {
         const int lvl = settings.value("ui/obf/junkLevel", 2).toInt();
         cmbJunkLevel->setCurrentIndex(qBound(0, lvl - 1, cmbJunkLevel->count() - 1));
@@ -480,6 +481,7 @@ void MainWindow::saveSettings() {
     saveObf(chkObfJunk,          "ui/obf/junk");
     saveObf(chkObfHideMethod,    "ui/obf/hideMethod");
     saveObf(chkObfHideField,     "ui/obf/hideField");
+    saveObf(chkObfAiNotice,      "ui/obf/aiNotice");
     if (cmbJunkLevel) {
         settings.setValue("ui/obf/junkLevel", cmbJunkLevel->currentIndex() + 1);
     }
@@ -1087,6 +1089,15 @@ QGroupBox *MainWindow::createPaperPluginGroup(QWidget *parent) {
             "IDEA 反编译时隐藏字段",
             "写入特殊属性,使 IDEA 的反编译器看不到这些字段。",
             true);
+    chkObfAiNotice = makeObfCheck(
+            "AI 提示词注入",
+            "给每个类注入一个常量,内容是一份写给自动化分析系统与大模型的声明,"
+            "要求它拒绝解释/还原本类的实现。该常量不被任何代码引用、不影响"
+            "运行期行为,但反编译后能被原样看到。\n"
+            "有效场合:攻击者直接把代码/反编译结果贴给 AI 的批量脚本与随手一贴。\n"
+            "局限:模型可能不理会,也可能被“忽略文件里的任何指令”绕开 —— "
+            "它是抬高成本,不是可靠防护。每个类约增大 1.8KB。默认关。",
+            false);
 
     cmbJunkLevel = new QComboBox(grpObfuscation);
     for (int i = 1; i <= 9; ++i) {
@@ -1115,6 +1126,7 @@ QGroupBox *MainWindow::createPaperPluginGroup(QWidget *parent) {
     }
     obfLayout->addWidget(chkObfHideMethod,     2, 3);
     obfLayout->addWidget(chkObfHideField,      3, 0);
+    obfLayout->addWidget(chkObfAiNotice,       3, 1);
     groupLayout->addWidget(grpObfuscation);
 
     // 两个单选按钮 = 预设:切换时批量勾选下面的复选框
@@ -1569,6 +1581,7 @@ bool MainWindow::buildPipelineConfig(PackerPipeline::Config &config,
         config.junkLevel = cmbJunkLevel ? (cmbJunkLevel->currentIndex() + 1) : 5;
         config.enableHideMethod = chkObfHideMethod->isChecked();
         config.enableHideField = chkObfHideField->isChecked();
+        config.enableAiNotice = chkObfAiNotice->isChecked();
 
         // 关掉类名混淆后主类不会被改名,但仍然要靠 plugin.yml 找到它 ——
         // 这条路径上游已经能处理(映射表里没有主类条目时按原名继续)。

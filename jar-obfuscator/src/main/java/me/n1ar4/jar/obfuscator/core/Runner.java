@@ -634,6 +634,13 @@ public class Runner {
             }
         }
 
+        if (config.isEnableAiNotice()) {
+            // AI 提示词注入。
+            // 位置很关键:必须在上面所有字符串处理之后 —— 否则这段声明自己会被
+            // 加密或被提取成下标,反编译出来看不到原文,等于白注入。
+            AiNoticeTransformer.transform(config);
+        }
+
         if (config.isEnableJunk()) {
             // 花指令混淆
             JunkCodeTransformer.transform(config);

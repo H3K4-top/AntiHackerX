@@ -163,6 +163,7 @@ private:
     QComboBox *cmbJunkLevel = nullptr;        // 垃圾代码级别(1-9)
     QCheckBox *chkObfHideMethod = nullptr;    // IDEA 反编译时隐藏方法
     QCheckBox *chkObfHideField = nullptr;     // IDEA 反编译时隐藏字段
+    QCheckBox *chkObfAiNotice = nullptr;      // AI 提示词注入(防 AI 辅助破解)
 
     // 要隐藏的类
     QPushButton *btnScanClasses;
