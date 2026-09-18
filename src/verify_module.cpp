@@ -27,6 +27,9 @@ const char *const kBootstrapTemplate = ":/verify/templates/Bootstrap.java.tmpl";
 /** Paper 插件入口模板(入口须 extends JavaPlugin) */
 const char *const kPluginBootstrapTemplate =
         ":/verify/templates/PluginBootstrap.java.tmpl";
+/// Fabric MOD 的入口模板(PreLaunchEntrypoint)
+const char *const kFabricBootstrapTemplate =
+        ":/verify/templates/FabricBootstrap.java.tmpl";
 
 /** Java 源码里每个语句的缩进(位于 main 方法体内) */
 const char *const kIndent = "        ";
@@ -128,6 +131,9 @@ const VerifyModule::ResourceEntry VerifyModule::kEmbeddedResources[] = {
     { ":/verify/java/top/h3k4/AhxSignature.java",   "java/top/h3k4/AhxSignature.java"   },
     // 启动时的加壳版权提示
     { ":/verify/java/top/h3k4/CopyrightNotice.java", "java/top/h3k4/CopyrightNotice.java" },
+    // 入口模板(Fabric 那份必须在表里:漏了就会在打包时毙掉,
+    // 因为模板是从 Qt 资源里读的)
+    { ":/verify/templates/FabricBootstrap.java.tmpl", "templates/FabricBootstrap.java.tmpl" },
 };
 
 // ---------------------------------------------------------------------------
@@ -219,7 +225,9 @@ VerifyModule::Result VerifyModule::prepare(const QString &inputJarPath,
     result.linkName = generateLinkName();
     result.templateUsed = (options.kind == Kind::BukkitPlugin)
             ? QStringLiteral("PluginBootstrap.java.tmpl")
-            : QStringLiteral("Bootstrap.java.tmpl");
+            : (options.kind == Kind::FabricMod)
+              ? QStringLiteral("FabricBootstrap.java.tmpl")
+              : QStringLiteral("Bootstrap.java.tmpl");
 
     // 每个载荷包一个定义器 —— 解密出来的类必须由宿主类加载器定义,
     // 而 Lookup#defineClass 要求同包。
@@ -374,6 +382,8 @@ QString VerifyModule::kindName(Kind kind) {
     switch (kind) {
         case Kind::BukkitPlugin:
             return QStringLiteral("Bukkit/Paper 插件");
+        case Kind::FabricMod:
+            return QStringLiteral("Fabric MOD");
         case Kind::Plain:
         default:
             return QStringLiteral("普通 JAR");
@@ -393,10 +403,21 @@ QString VerifyModule::buildBootstrapSource(const QString &inputJarPath,
                                            QStringList &outCalls,
                                            QString &errorMessage) {
     // 按目标程序形态选入口模板:插件入口必须 extends JavaPlugin,
+    // Fabric 的入口必须 implements PreLaunchEntrypoint,
     // 普通程序则走 main + 解密加载器。
-    const char *templatePath = (options.kind == Kind::BukkitPlugin)
-            ? kPluginBootstrapTemplate
-            : kBootstrapTemplate;
+    const char *templatePath = nullptr;
+    switch (options.kind) {
+        case Kind::BukkitPlugin:
+            templatePath = kPluginBootstrapTemplate;
+            break;
+        case Kind::FabricMod:
+            templatePath = kFabricBootstrapTemplate;
+            break;
+        case Kind::Plain:
+        default:
+            templatePath = kBootstrapTemplate;
+            break;
+    }
 
     QFile tmpl(QString::fromLatin1(templatePath));
     if (!tmpl.exists()) {

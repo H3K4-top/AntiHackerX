@@ -27,7 +27,8 @@ public:
      */
     enum class Kind {
         Plain,         // 普通 JAR / Spring Boot:有 main 入口,反射调用
-        BukkitPlugin   // Paper / Spigot 插件:入口必须 extends JavaPlugin
+        BukkitPlugin,  // Paper / Spigot 插件:入口必须 extends JavaPlugin
+        FabricMod      // Fabric MOD:入口是 PreLaunchEntrypoint,由它拉起真实入口
     };
 
     /**

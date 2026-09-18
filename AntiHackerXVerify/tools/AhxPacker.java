@@ -69,9 +69,18 @@ public final class AhxPacker {
         // 尾部选项先摘出来,剩下的才是位置参数。
         final List<String> positional = new ArrayList<String>();
         String signKeyPath = "";
+        // 必须明文的额外类(Fabric 的 mixin 类):内部名,逗号分隔
+        String keepPlainArg = "";
+        // 资源覆盖:entryPath=文件路径。用于改写 fabric.mod.json 这类元数据 ——
+        // 在 Java 里手工拼 JSON 太危险,交给调用方(Qt 那边有真 JSON 解析器)。
+        final List<String> resourceOverrides = new ArrayList<String>();
         for (int i = 0; i < args.length; i++) {
             if ("--sign-key".equals(args[i]) && i + 1 < args.length) {
                 signKeyPath = args[++i];
+            } else if ("--keep-plain".equals(args[i]) && i + 1 < args.length) {
+                keepPlainArg = args[++i];
+            } else if ("--set-resource".equals(args[i]) && i + 1 < args.length) {
+                resourceOverrides.add(args[++i]);
             } else {
                 positional.add(args[i]);
             }
@@ -233,6 +242,47 @@ public final class AhxPacker {
 
         final Map<String, byte[]> pinned = new LinkedHashMap<String, byte[]>();
         final String mainInternal = declaredMain.replace('.', '/');
+
+        // 额外的必须明文集合:Fabric 的 mixin 类。
+        //
+        // 为什么非要明文:Mixin 框架是**自己从 JAR 里按名字读字节**的,
+        // 不走 Class.forName,也不经过我们那个解密加载器 —— 加密了它就看不到这个类,
+        // mod 直接静默失效。
+        //
+        // 为什么连超类型也一起钉:JVM 校验 mixin 类时会解析它的父类/接口,
+        // 缺一个就是 NoClassDefFoundError(和 GrimAC 那次同一个原因)。
+        // 注意这里**不重定向父类**:mixin 类不是入口,没有插桥这一说。
+        int keptPlainCount = 0;
+        for (String raw : keepPlainArg.split(",")) {
+            final String keep = raw.trim().replace('.', '/');
+            if (keep.isEmpty()) {
+                continue;
+            }
+            if (!allClasses.containsKey(keep)) {
+                System.err.println("警告: --keep-plain 指定的类不在 JAR 里: " + keep);
+                continue;
+            }
+            pinVerifierNeed(allClasses, keep, new java.util.HashSet<String>(), pinned);
+            ++keptPlainCount;
+        }
+        if (keptPlainCount > 0) {
+            System.out.println("mixin 明文   : " + keptPlainCount + " 个类(+它们引用的类型)");
+        }
+
+        // 资源覆盖:在算签名之前就得落好 —— 反篡改签名盖的是最终字节,
+        // 改晚了会把已经被签过的内容又改一遍,产物直接校验不过。
+        for (String spec : resourceOverrides) {
+            final int eq = spec.indexOf('=');
+            if (eq <= 0 || eq == spec.length() - 1) {
+                System.err.println("错误: --set-resource 需要 entryPath=文件 形式,收到 " + spec);
+                System.exit(2);
+            }
+            final String entryPath = spec.substring(0, eq);
+            final byte[] content = java.nio.file.Files.readAllBytes(
+                    java.nio.file.Paths.get(spec.substring(eq + 1)));
+            resources.put(entryPath, content);
+            System.out.println("资源覆盖     : " + entryPath + " (" + content.length + " 字节)");
+        }
         if (!bridgeInternal.isEmpty()) {
             pinVerifierNeed(allClasses, mainInternal, new java.util.HashSet<String>(), pinned);
             if (!pinned.containsKey(mainInternal)) {

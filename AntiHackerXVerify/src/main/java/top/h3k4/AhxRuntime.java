@@ -11,8 +11,10 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 运行时入口工具。
@@ -710,5 +712,141 @@ public final class AhxRuntime {
         final Method main = target.getMethod("main", String[].class);
         // 反射调用静态方法时第一个参数传 null
         main.invoke(null, (Object) args);
+    }
+
+    // =======================================================================
+    //  Fabric:解密完成后拉起真实入口
+    // =======================================================================
+
+    /**
+     * Fabric 的三个入口接口与各自的方法名。
+     *
+     * <p>顺序就是 Fabric 自己的调用顺序:先所有 {@code main},再 client / server。
+     * 有些 mod 依赖这个顺序(主入口先注册内容,client 入口才去注册渲染),
+     * 所以外层循环必须是接口、内层才是类。</p>
+     */
+    private static final String[][] FABRIC_ENTRYPOINTS = {
+            {"net/fabricmc/api/ModInitializer", "onInitialize"},
+            {"net/fabricmc/api/ClientModInitializer", "onInitializeClient"},
+            {"net/fabricmc/api/DedicatedServerModInitializer", "onInitializeServer"},
+    };
+
+    /**
+     * Fabric:把载荷里(以及 JAR 里那些被原生化过的 stub 里)的入口类找出来拉起来。
+     *
+     * <h3>为什么入口类名不在任何地方出现</h3>
+     *
+     * <p>打包时已经把 {@code fabric.mod.json} 里的 {@code entrypoints} 抹掉、换成
+     * 指向本桥的 {@code preLaunch}。这里也**不读任何类名常量**,而是直接扫
+     * 「已经定义进宿主的类」+「本 JAR 里的类」,按<b>实现了哪个接口</b>来判定。</p>
+     *
+     * <p>于是产物里没有任何一处写着"某某类是入口":混淆后的类名照旧,
+     * 而入口特征(接口)只以字节码形式存在,与其它类别无二致。</p>
+     *
+     * <p>两个来源都要扫的原因:被 native-obfuscator 搬进原生库的类不在载荷里,
+     * 它的明文 stub 就在 JAR 内 —— 而 stub 保留了接口声明,所以照样能被认出来。</p>
+     *
+     * @return 实际拉起的入口个数
+     */
+    public static int invokeEntrypoints() throws Exception {
+        if (host == null) {
+            throw new IllegalStateException("AhxRuntime 尚未初始化,请先调用 install()");
+        }
+
+        final Set<String> candidates = new LinkedHashSet<String>();
+        synchronized (DEFINED) {
+            candidates.addAll(DEFINED.keySet());
+        }
+        candidates.addAll(jarClassNames());
+
+        int invoked = 0;
+        for (String[] entry : FABRIC_ENTRYPOINTS) {
+            final String interfaceName = entry[0];
+            final String methodName = entry[1];
+            for (String internal : candidates) {
+                Class<?> type;
+                try {
+                    // 不初始化:只是看一眼接口,别触发对方的静态块
+                    type = Class.forName(internal.replace('/', '.'), false, host);
+                } catch (Throwable unavailable) {
+                    // 缺可选依赖、或者不是这个环境的类(如只有客户端才有的类)
+                    continue;
+                }
+                if (!implementsInterface(type, interfaceName)) {
+                    continue;
+                }
+                invokeEntrypoint(type, methodName);
+                invoked++;
+            }
+        }
+        return invoked;
+    }
+
+    /** 调一个入口方法。Fabric 的入口是实例方法,自己 new 一个;静态方法就直接调。 */
+    private static void invokeEntrypoint(Class<?> type, String methodName) throws Exception {
+        final Method method = type.getMethod(methodName);
+        if (java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+            method.invoke(null);
+            return;
+        }
+        final Object instance = type.newInstance();
+        method.invoke(instance);
+    }
+
+    /** 类(含父类)是否实现了指定接口。用接口名比较,避免编译期就要依赖那些接口。 */
+    private static boolean implementsInterface(Class<?> type, String interfaceInternalName) {
+        final String wanted = interfaceInternalName.replace('/', '.');
+        for (Class<?> current = type; current != null; current = current.getSuperclass()) {
+            final Class<?>[] interfaces = current.getInterfaces();
+            for (Class<?> candidate : interfaces) {
+                if (candidate.getName().equals(wanted)
+                        || implementsInterface(candidate, interfaceInternalName)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 本 JAR 里所有类的内部名。
+     *
+     * <p>拿不到(不是从 JAR 启动、或被包在别的容器里)时返回空表 ——
+     * 那就只扫载荷里的类,不报错。</p>
+     */
+    private static List<String> jarClassNames() {
+        final List<String> names = new ArrayList<String>();
+        try {
+            final java.security.CodeSource source =
+                    AhxRuntime.class.getProtectionDomain().getCodeSource();
+            if (source == null || source.getLocation() == null) {
+                return names;
+            }
+            final java.io.File file = new java.io.File(source.getLocation().toURI());
+            if (!file.isFile()) {
+                return names;
+            }
+            final java.util.zip.ZipFile zip = new java.util.zip.ZipFile(file);
+            try {
+                final java.util.Enumeration<? extends java.util.zip.ZipEntry> entries =
+                        zip.entries();
+                while (entries.hasMoreElements()) {
+                    final String name = entries.nextElement().getName();
+                    if (!name.endsWith(".class")) {
+                        continue;
+                    }
+                    // 跳过 module-info 之类的非类条目
+                    if (!name.endsWith("/") && name.indexOf("module-info") >= 0) {
+                        continue;
+                    }
+                    names.add(name.substring(0, name.length() - ".class".length()));
+                }
+            } finally {
+                zip.close();
+            }
+        } catch (Throwable ignored) {
+            // 只影响"能不能认出被原生化过的入口",不该让启动失败
+        }
+        return names;
     }
 }

@@ -31,6 +31,8 @@
         <!-- 入口模板 -->
         <file alias="templates/Bootstrap.java.tmpl">templates/Bootstrap.java.tmpl</file>
         <file alias="templates/PluginBootstrap.java.tmpl">templates/PluginBootstrap.java.tmpl</file>
+        <!-- Fabric MOD:入口是 PreLaunchEntrypoint,自己拉起真实入口 -->
+        <file alias="templates/FabricBootstrap.java.tmpl">templates/FabricBootstrap.java.tmpl</file>
 
         <!-- 最终打包器(单文件源码启动:java AhxPacker.java ...)
              内嵌一份是为了让发布版不依赖源码树 —— 用户机器上没有
