@@ -43,6 +43,13 @@
 
 **最大的坑:Mixin**
 
+- [x] **依赖已就位**:验证模块加了 `compileOnly("net.fabricmc:sponge-mixin:…")`
+      (Fabric fork,与上游共用 `org.spongepowered.asm.mixin.*`;上游
+      `org.spongepowered:mixin` 只在 Sponge 仓库)。打包时 javac 的 classpath
+      就是界面上的「额外依赖」那一栏,它支持直接给目录(递归找 jar)
+- [ ] 写第一个 mixin 类时注意:**没有 fabric-loom 就没有 refmap**,
+      所以要用 `targets = "..."` 字符串目标,别用类型化 target,
+      否则生产环境重映射会失败
 - `*.mixins.json` 用"包名 + 类名"**字符串**引用 mixin 类,而混淆器会改名
   → 必须让 `ResourceTransformer` **同步重写 mixins.json**,否则 mod 直接崩
 - mixin 类**不能被加密**:Mixin 框架用自己的 `MixinService` 从 jar 里直接读字节,
