@@ -34,13 +34,26 @@ const char *kReleaseApiUrl =
     "https://api.github.com/repos/xiaofanforfabric/native-obfuscator/releases/latest";
 const char *kReleasePageUrl =
     "https://github.com/xiaofanforfabric/native-obfuscator/releases";
-/// GitHub API 不可达(限流/断网)时的兜底版本,该标签已确认释放过资产
-const char *kFallbackReleaseTag = "v1.4.0";
+/// GitHub API 不可达(限流/断网)时的兜底版本,该标签已确认释放过资产。
+///
+/// ⚠️ 必须随新版一起更新:依赖包与 AntiHackerX 是分开发版的,停在旧标签
+/// 会让断网用户拿到没有"加载器/隐藏类名随机化"的旧版 —— 两个加壳插件
+/// 装在同一台服务器上就会 LinkageError。
+const char *kFallbackReleaseTag = "v1.4.8";
 
 /// 由标签推出分发包的下载地址(资产命名规律:native-obfuscator-<tag>.zip)
 QString releaseZipUrlForTag(const QString &tag) {
     return QString("%1/download/%2/native-obfuscator-%2.zip")
         .arg(QString::fromLatin1(kReleasePageUrl), tag);
+}
+
+/// 标签 `v1.4.8` → `1.4.8`,先归一化才能和 jar 自己报的版本号比较
+QString versionFromTag(const QString &tag) {
+    QString version = tag.trimmed();
+    if (version.startsWith(QLatin1Char('v'), Qt::CaseInsensitive)) {
+        version.remove(0, 1);
+    }
+    return version;
 }
 
 /// 便携版 Java 的下载地址(Adoptium Temurin,开源且允许再分发)
@@ -157,8 +170,11 @@ const char *kWin32JniMdContent =
     "typedef signed char jbyte;\n"
     "#endif\n";
 
-/// 同步 GET 一个小体积文本/JSON 资源(GitHub API 用)
-bool blockingHttpGet(const QUrl &url, const QByteArray &accept, QByteArray *bodyOut, QString *errorOut) {
+/// 同步 GET 一个小体积文本/JSON 资源(GitHub API 用)。
+///
+/// timeoutMs 可调:单纯做更新检查时用短超时,避免离线启动干等半分钟。
+bool blockingHttpGet(const QUrl &url, const QByteArray &accept, QByteArray *bodyOut,
+                     QString *errorOut, int timeoutMs = 30000) {
     QNetworkAccessManager manager;
     QNetworkRequest request(url);
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
@@ -169,7 +185,7 @@ bool blockingHttpGet(const QUrl &url, const QByteArray &accept, QByteArray *body
                           .arg(QApplication::applicationName(),
                                QApplication::applicationVersion()));
     request.setRawHeader("Accept", accept);
-    request.setTransferTimeout(30000);
+    request.setTransferTimeout(timeoutMs);
 
     QNetworkReply *reply = manager.get(request);
     QEventLoop loop;
@@ -313,6 +329,53 @@ bool RuntimeBootstrap::probeJava(const QString &javaExecutable, QString *version
         *versionOut = output.section('\n', 0, 0).trimmed();
     }
     return true;
+}
+
+QString RuntimeBootstrap::probeNativeObfuscatorVersion(const QString &javaExecutable,
+                                                       const QString &jarPath) {
+    if (javaExecutable.isEmpty() || !QFileInfo::exists(jarPath)) {
+        return QString();
+    }
+
+    QProcess process;
+    process.setProcessChannelMode(QProcess::MergedChannels);
+    process.start(javaExecutable, QStringList{QStringLiteral("-jar"),
+                                              jarPath,
+                                              QStringLiteral("--version")});
+    if (!process.waitForStarted(10000)) {
+        return QString();
+    }
+    if (!process.waitForFinished(20000)) {
+        process.kill();
+        process.waitForFinished(3000);
+        return QString();
+    }
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        return QString();
+    }
+
+    // 输出形如 "native-obfuscator 1.4.8"。逐行找,免得 JVM 的告警行挡在前面;
+    // 取该行最后一个空白分隔的字段,并顺便吃掉可能存在的 v 前缀。
+    const QString output = QString::fromUtf8(process.readAll());
+    const QStringList lines = output.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    for (const QString &raw : lines) {
+        const QString line = raw.simplified();
+        if (!line.contains(QStringLiteral("native-obfuscator"), Qt::CaseInsensitive)) {
+            continue;
+        }
+        const QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        if (parts.isEmpty()) {
+            continue;
+        }
+        QString version = parts.last();
+        if (version.startsWith(QLatin1Char('v'), Qt::CaseInsensitive)) {
+            version.remove(0, 1);
+        }
+        if (!version.isEmpty()) {
+            return version;
+        }
+    }
+    return QString();
 }
 
 QString RuntimeBootstrap::detectJavaExecutable(QString *versionOut, QString *homeOut) {
@@ -876,24 +939,24 @@ bool RuntimeBootstrap::installPortableCppToolchain() {
 
 bool RuntimeBootstrap::ensureNativeObfuscator() {
     m_jarPath = jarPathForRoot(m_root);
+    const bool haveJar = QFileInfo(m_jarPath).size() > 0;
 
-    if (QFileInfo(m_jarPath).size() > 0) {
-        appendLog(QString("[依赖] 已存在,跳过下载: %1").arg(m_jarPath));
-        return true;
-    }
+    appendLog(QString("[依赖] 查询最新版 native-obfuscator:%1").arg(kReleaseApiUrl));
 
-    appendLog(QString("[依赖] 开始获取最新版 native-obfuscator:%1").arg(kReleaseApiUrl));
-
-    // 查 GitHub API 拿到最新 Release 的压缩包地址
+    // 查 GitHub API 拿到最新 Release 的标签与压缩包地址。
+    // 本地已有依赖时这次查询只为比对版本,超时收紧到 10 秒 —— 离线启动
+    // 不该为了更新检查干等半分钟。
+    QString tag;
     QString zipUrl;
     QString apiError;
     QByteArray body;
     if (blockingHttpGet(QUrl(QString::fromLatin1(kReleaseApiUrl)),
                         QByteArrayLiteral("application/vnd.github+json"),
                         &body,
-                        &apiError)) {
+                        &apiError,
+                        haveJar ? 10000 : 30000)) {
         const QJsonObject root = QJsonDocument::fromJson(body).object();
-        const QString tag = root.value(QStringLiteral("tag_name")).toString();
+        tag = root.value(QStringLiteral("tag_name")).toString();
         const QJsonArray assets = root.value(QStringLiteral("assets")).toArray();
         for (const QJsonValue &value : assets) {
             const QJsonObject asset = value.toObject();
@@ -908,13 +971,37 @@ bool RuntimeBootstrap::ensureNativeObfuscator() {
         if (zipUrl.isEmpty() && !tag.isEmpty()) {
             zipUrl = releaseZipUrlForTag(tag);
         }
-        if (!zipUrl.isEmpty()) {
-            appendLog(QString("[依赖] 最新版本: %1").arg(tag.isEmpty() ? QStringLiteral("(未知)") : tag));
+    }
+
+    if (haveJar) {
+        // 本地已有依赖。这里的关键是"宁可不动":只有确认远端版本确实不同
+        // 才重下,否则断网时会把好好的依赖降级成 kFallbackReleaseTag 那个旧版。
+        if (tag.isEmpty()) {
+            appendLog(QString("[依赖] 已存在但查不到远端版本(%1),保留现状: %2")
+                          .arg(apiError, m_jarPath));
+            return true;
         }
-    } else {
+
+        const QString localVersion = probeNativeObfuscatorVersion(m_javaExe, m_jarPath);
+        const QString remoteVersion = versionFromTag(tag);
+        if (localVersion.isEmpty()) {
+            // 读不出本地版本(jar 损坏,或用户手动塞了别的产物)——同样保留,
+            // 免得每次启动都重下一遍
+            appendLog(QString("[依赖] 已存在但读不出本地版本,保留现状: %1").arg(m_jarPath));
+            return true;
+        }
+        if (localVersion == remoteVersion) {
+            appendLog(QString("[依赖] 已是最新(%1),跳过下载: %2").arg(localVersion, m_jarPath));
+            return true;
+        }
+        appendLog(QString("[依赖] 本地 %1 → 最新 %2,开始更新")
+                      .arg(localVersion, remoteVersion.isEmpty() ? tag : remoteVersion));
+    } else if (zipUrl.isEmpty()) {
         appendLog(QString("[依赖] 查询 Release 失败(%1),回退到固定版本 %2")
                       .arg(apiError, QString::fromLatin1(kFallbackReleaseTag)));
         zipUrl = releaseZipUrlForTag(QString::fromLatin1(kFallbackReleaseTag));
+    } else if (!tag.isEmpty()) {
+        appendLog(QString("[依赖] 最新版本: %1").arg(tag));
     }
 
     if (zipUrl.isEmpty()) {
@@ -933,7 +1020,12 @@ bool RuntimeBootstrap::ensureNativeObfuscator() {
         return false;
     }
 
-    appendLog(QString("[依赖] 就绪: %1").arg(m_jarPath));
+    // 把装上的是哪个版本写进日志 —— 用户排查"我到底有没有拿到新版"时
+    // 第一眼就该看到它
+    const QString installedVersion = probeNativeObfuscatorVersion(m_javaExe, m_jarPath);
+    appendLog(installedVersion.isEmpty()
+                  ? QString("[依赖] 就绪: %1").arg(m_jarPath)
+                  : QString("[依赖] 就绪: %1 (版本 %2)").arg(m_jarPath, installedVersion));
     return true;
 }
 

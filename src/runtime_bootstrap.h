@@ -18,6 +18,8 @@ class QWidget;
  *      用户拒绝则提示"必须安装 Java"并让程序退出。
  *   2. 有可用的 native-obfuscator 依赖 —— 从 GitHub Release 取最新版,
  *      解开后把 jar 放到 <EXE 同级>/libs/。
+ *      本地已有时会比对版本(远端 tag ↔ 本地 jar 的 `--version`),只有不一致
+ *      才重下;断网 / API 限流时保留现有 jar,不回退到旧版本。
  *
  * 目录布局(都以可执行文件所在目录为基准,便于做成绿色版):
  *   <root>/AntiHackerX(.exe)
@@ -75,6 +77,10 @@ public:
     static QString detectJavaExecutable(QString *versionOut = nullptr, QString *homeOut = nullptr);
     /// 判断给定 java 主程序能否正常执行
     static bool probeJava(const QString &javaExecutable, QString *versionOut, QString *errorOut);
+    /// 读取本地 native-obfuscator jar 自报的版本号(跑 `java -jar <jar> --version`)。
+    /// 拿不到返回空串 —— 调用方应把它当作"无法判断",而不是"过期"。
+    static QString probeNativeObfuscatorVersion(const QString &javaExecutable,
+                                                const QString &jarPath);
 
 signals:
     void logMessage(const QString &message);
