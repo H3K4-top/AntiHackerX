@@ -32,8 +32,14 @@ build/
 # ⚠️ 必须锚定到仓库根(`/java/`),不能写 `java/`:
 # 未锚定的 `java/` 会连 AntiHackerXVerify/src/main/java/ 一起忽略掉。
 /java/
-/libs/
 .bootstrap-tmp/
+
+# ⚠️ 这里必须是 `/libs/*` 而不是 `/libs/`:
+# `libs/minizip/` 是**内嵌进源码树**的第三方源码(CMakeLists.txt 直接编译它),
+# 没有它谁都构建不起来 —— 但 `/libs/` 会把整个目录连同它一起排除,
+# 而且"父目录被排除时无法再放行子文件",加否定规则也救不回来。
+/libs/*
+!libs/minizip/
 
 # IDE
 .idea/

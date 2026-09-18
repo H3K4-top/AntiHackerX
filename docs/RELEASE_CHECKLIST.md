@@ -2,6 +2,24 @@
 
 > 发版前逐项过一遍。产品方向与功能规划见 [../TODO.md](../TODO.md)。
 
+## 0. 推 tag 即自动构建(已配好)
+
+`.github/workflows/release.yml`,推 `v*` 标签触发,产出四份东西并建 Release:
+
+| 产物 | 说明 |
+|---|---|
+| `AntiHackerX-<tag>-win64.zip` | MSYS2/MinGW 编译,内含 Qt 运行库,解压即用 |
+| `AntiHackerX-<tag>-linux-x64.tar.gz` | ubuntu-22.04(glibc 2.35 / Qt 6.2.4) |
+| `AntiHackerX-<tag>-linux-arm64.tar.gz` | arm 运行器 |
+| `jar-obfuscator-2.0.1-jar-with-dependencies.jar` | **文件名不能改**,流水线按固定名找它 |
+
+另外会生成 `SHA256SUMS.txt`。Linux 那个 job 里还会跑
+`check-license-isolation.sh` —— 许可证隔离被破坏时**直接卡住发布**。
+
+- [ ] 试跑:先手动触发一次(`workflow_dispatch`,不发 Release)确认四个 job 都绿
+- [ ] 再推标签:`git tag -a v1.0.0 -F -` → `git push origin v1.0.0`
+- [ ] 发布后下 win64 的包,在没装 Qt 的机器上解压跑一次
+
 ## 1. native-obfuscator fork 发 **v1.4.8**
 
 - [ ] `native-obfuscator/obfuscator/src/main/java/by/radioegor146/Main.java` 的
@@ -44,14 +62,18 @@
 - [ ] 仓库简介与 Topics(**可直接复制**):
   - About:`给 Java 产物加壳:字节码混淆 + 类加密 + 原生编译 | JAR protector with class encryption and native compilation`
   - Topics:`java` `obfuscator` `jar` `anti-decompile` `code-protection` `qt6` `cpp` `minecraft-plugin` `paper-plugin`
-- [ ] `check-license-isolation.sh` 加进 CI —— 它是"主程序与 GPL 组件只通过
+- [x] `check-license-isolation.sh` 加进 CI —— 它是"主程序与 GPL 组件只通过
       **进程调用**耦合"的**证据**,开源后这个立场必须能被自动验证
+      (在 `release.yml` 的 `gui-linux` job 里,`linux-x64` 上构建完后跑;
+      它失败会**直接卡住 Release**)
 - [ ] 建组织级 `.github` 仓库(放默认社区健康文件)
 
 ## 4. 仓库卫生(开源前最后一次过一遍)
 
-- [ ] `testp/`、`native-obfuscator/`、`/java/`、`/libs/`、`build/` 都确认未入库
-- [ ] `FanVerify-obf/`(实验产物)要么清理要么 gitignore
+- [x] `testp/`、`native-obfuscator/`、`/java/`、`build/` 都确认未入库
+      (`libs/` 只入库 `libs/minizip/` —— 它是 CMake 直接编译的内嵌源码,
+      没有它谁都构建不起来;`.gitignore` 里必须是 `/libs/*` 而非 `/libs/`)
+- [x] `FanVerify-obf/`(实验产物)要么清理要么 gitignore
 - [ ] **扫历史提交**:确认从没提交过真实插件 JAR、签名私钥、`.gradle` 缓存
       (如有 → `git filter-repo` 清理,别只在新提交里删)
 - [ ] 主程序首个 Release:三平台二进制 + SHA-256 校验和

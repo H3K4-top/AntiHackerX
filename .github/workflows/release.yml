@@ -1,0 +1,229 @@
+name: Release
+
+# 推 tag(v*)→ 自动构建四份产物并建 Release。
+# 也可以在 Actions 页面手动跑一次(workflow_dispatch):手动触发**只构建、不发
+# Release**,方便在不打标签的情况下试跑。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write          # 建 Release / 上传产物需要
+
+env:
+  # 有 tag → 用 tag 名(如 v1.0.0);手动触发 → dev
+  AHX_VER: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+
+jobs:
+  # ===========================================================================
+  # JOBF:jar-obfuscator 的 fat jar
+  #
+  # 产物**不能改名**:流水线按固定文件名找它
+  # (packer_pipeline.cpp 找的是 libs/jar-obfuscator-2.0.1-jar-with-dependencies.jar)。
+  # ===========================================================================
+  jobf:
+    name: JOBF (jar-obfuscator)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'          # pom 的源码/目标级别是 Java 8,用 17 编译没问题
+          cache: maven
+          cache-dependency-path: jar-obfuscator/pom.xml
+
+      - name: 构建 fat jar
+        working-directory: jar-obfuscator
+        run: mvn -B -ntp -DskipTests package
+
+      - name: 校验产物
+        working-directory: jar-obfuscator
+        run: |
+          set -eu
+          fat="$(ls target/jar-obfuscator-*-jar-with-dependencies.jar)"
+          # 没有 Main-Class 的话工具链调不起来,先在这里拦住
+          unzip -p "$fat" META-INF/MANIFEST.MF | grep -qi '^Main-Class:'
+          echo "产物: $fat ($(du -h "$fat" | cut -f1))"
+          java -jar "$fat" --help 2>&1 | head -3 || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jar-obfuscator
+          path: jar-obfuscator/target/jar-obfuscator-*-jar-with-dependencies.jar
+          if-no-files-found: error
+          retention-days: 7
+
+  # ===========================================================================
+  # GUI:Linux x64 / arm64
+  #
+  # 用 ubuntu-22.04 而不是 latest:它自带 Qt 6.2.4(与开发机完全一致,不会有
+  # 新版本 Qt 的 API 差异),而且 glibc 2.35 的基线在老发行版上也能跑。
+  # arm64 用 GitHub 的 arm 运行器,公共仓库免费。
+  # ===========================================================================
+  gui-linux:
+    name: GUI (${{ matrix.arch }})
+    strategy:
+      fail-fast: false          # 一个架构挂了不影响另一个
+      matrix:
+        include:
+          - { runner: ubuntu-22.04,     arch: linux-x64 }
+          - { runner: ubuntu-22.04-arm, arch: linux-arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qt6-base-dev zlib1g-dev cmake ninja-build g++ binutils tar
+
+      - name: 配置
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: 编译
+        run: cmake --build build --parallel
+
+      # 主程序与 GPL 组件只允许通过"独立进程"耦合。开源后这个立场必须能被
+      # 自动验证,所以把它放进流水线里(见 docs/RELEASE_CHECKLIST.md)。
+      - name: 许可证隔离检查
+        if: matrix.arch == 'linux-x64'
+        run: bash check-license-isolation.sh
+
+      - name: 打包
+        run: |
+          set -eu
+          test -x build/bin/AntiHackerX
+          stage="AntiHackerX-${AHX_VER}-${{ matrix.arch }}"
+          mkdir -p "$stage"
+          cp build/bin/AntiHackerX "$stage/"
+          cat > "$stage/README.txt" <<TXT
+          AntiHackerX ${AHX_VER} (${{ matrix.arch }})
+
+          运行前需要 Qt 6 运行库(本包不自带):
+            Ubuntu/Debian : sudo apt install qt6-base-dev
+            Arch          : sudo pacman -S qt6-base
+            Fedora        : sudo dnf install qt6-qtbase
+
+          运行:
+            ./AntiHackerX
+
+          首次启动会带进度条自动拉齐便携 JDK(可选)、native-obfuscator 与 zig
+          工具链,需要能访问 github.com。
+
+          这是图形界面程序,需要桌面环境;纯 SSH 的服务器请在有桌面的机器上运行。
+          TXT
+          tar -czf "${stage}.tar.gz" "$stage"
+          ls -l "${stage}.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gui-${{ matrix.arch }}
+          path: AntiHackerX-*-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  # ===========================================================================
+  # GUI:Windows x64
+  #
+  # 用 MSYS2 的 MinGW-w64 工具链:Qt6、zlib、windeployqt 一次 pacman 就全有了,
+  # 不用去 Qt 官网下 aqt、也不用装 MSVC。MinGW 还省掉了 VC++ 运行库的分发问题。
+  # ===========================================================================
+  gui-win64:
+    name: GUI (win64)
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 MSYS2 / MinGW-w64 与 Qt6
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-qt6-base
+            mingw-w64-x86_64-qt6-tools
+            mingw-w64-x86_64-zlib
+            zip
+
+      - name: 配置
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: 编译
+        run: cmake --build build --parallel
+
+      - name: 打包(自带 Qt 运行库,解压即用)
+        run: |
+          set -eu
+          stage="AntiHackerX-${AHX_VER}-win64"
+          mkdir -p "$stage"
+          cp build/bin/AntiHackerX.exe "$stage/"
+          # MSYS2 里 Qt6 的工具带版本后缀
+          if command -v windeployqt6 >/dev/null 2>&1; then
+            WDQ=windeployqt6
+          else
+            WDQ=windeployqt
+          fi
+          echo "使用 $WDQ"
+          "$WDQ" --release --no-translations --no-opengl-sw \
+                 --dir "$stage" "$stage/AntiHackerX.exe"
+          # 少一个核心 DLL 就说明没收集成功,别把半成品发出去
+          test -f "$stage/Qt6Core.dll"
+          zip -qr "${stage}.zip" "$stage"
+          ls -l "${stage}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gui-win64
+          path: AntiHackerX-*-win64.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  # ===========================================================================
+  # 汇总发布
+  # 四个构建都成功才走这里 —— 残缺的产物不如不发。
+  # ===========================================================================
+  release:
+    name: 发布 Release
+    needs: [jobf, gui-linux, gui-win64]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 生成 SHA-256 校验和
+        run: |
+          set -eu
+          cd dist
+          ls -l
+          sha256sum *.tar.gz *.zip *.jar > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: 建 Release 并上传产物
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          cd dist
+          # 重跑流水线时不报错:已存在就补传
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" ./* --clobber
+          else
+            gh release create "$TAG" ./* --title "$TAG" --generate-notes
+          fi
+          echo "https://github.com/$GH_REPO/releases/tag/$TAG"
