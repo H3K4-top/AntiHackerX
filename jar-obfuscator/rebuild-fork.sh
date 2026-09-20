@@ -38,6 +38,8 @@ $SRC_ROOT/me/n1ar4/jar/obfuscator/transform/XORTransformer.java
 $SRC_ROOT/me/n1ar4/jar/obfuscator/transform/StringTransformer.java
 $SRC_ROOT/me/n1ar4/jar/obfuscator/transform/JunkCodeTransformer.java
 $SRC_ROOT/me/n1ar4/jar/obfuscator/transform/AiNoticeTransformer.java
+$SRC_ROOT/me/n1ar4/jar/obfuscator/transform/StringClassRefTransformer.java
+$SRC_ROOT/me/n1ar4/jar/obfuscator/core/Runner.java
 "
 
 if [ $# -gt 0 ]; then
@@ -76,10 +78,24 @@ for src in $FILES; do
         fail=1
         continue
     fi
+    # 主类 + 它编译出来的**内部类**。
+    # 只回填主类是漏的:javac 会把 `X$1.class`、`X$Inner.class` 单独产出,
+    # 漏掉的话编译过得去、运行到那一句才 NoClassDefFoundError。
+    # (多文件形式的 `jar uf` 在这个挂载盘上会静默失败,所以每个文件单独调一次。)
+    base="${cls%.class}"
+    inner=$( (cd target/classes && ls "$base"\$*.class 2>/dev/null) || true )
+
     for jar in "$FAT" "$THIN"; do
         ( cd target/classes && jar uf "../../$jar" "$cls" )
+        for one in $inner; do
+            ( cd target/classes && jar uf "../../$jar" "$one" )
+        done
     done
-    echo "  ✓ $cls"
+    if [ -n "$inner" ]; then
+        echo "  ✓ $cls (+$(echo "$inner" | wc -w) 个内部类)"
+    else
+        echo "  ✓ $cls"
+    fi
 done
 
 echo

@@ -561,6 +561,15 @@ public class Runner {
         if (config.isEnablePackageName() || config.isEnableClassName()) {
             // 包名或类名重命名
             ClassNameTransformer.transform(loader);
+
+            // 类名字符串改写(等价 ProGuard 的 -adaptclassstrings)。
+            // 紧跟改名之后 —— 改名了却不改字符串,Class.forName("包.类") 那类
+            // 反射就会按老名字找改名后的类,直接 ClassNotFoundException
+            // (实测 voicechat 的 CrossSideManager)。
+            // 注意位置:**不能**放进 enableEncryptString 的分支里 —— 那是
+            // “要不要加密字符串”的选择,而这里是“改名后是否还正确”的刚需;
+            // 用户关掉字符串加密时反而更需要它。
+            StringClassRefTransformer.transform();
         }
 
         if (config.isEnableMethodName()) {
