@@ -5,7 +5,7 @@
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
     QApplication::setApplicationName("AntiHackerX");
-    QApplication::setApplicationVersion("2.0.0");
+    QApplication::setApplicationVersion("2.0.1");
     QApplication::setOrganizationName("H3K4");
     
     RuntimeBootstrap bootstrap(nullptr);

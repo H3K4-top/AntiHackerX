@@ -8,7 +8,7 @@ int main(int argc, char *argv[]) {
     
     // 设置应用信息
     QApplication::setApplicationName("AntiHackerX");
-    QApplication::setApplicationVersion("2.0.0");
+    QApplication::setApplicationVersion("2.0.1");
     // 组织名。注意:Qt 用它决定 QSettings 的存储位置
     // (Linux: ~/.config/<组织名>/,Windows 注册表: HKCU\Software\<组织名>),
     // 改动会让旧位置的设置读不到。

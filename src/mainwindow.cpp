@@ -177,7 +177,7 @@ void MainWindow::createMenuBar() {
     QAction *aboutAction = new QAction("关于(&A)...", this);
     connect(aboutAction, &QAction::triggered, [this]() {
         QMessageBox::about(this, "关于 AntiHackerX",
-            "AntiHackerX v2.0.0\n\n"
+            "AntiHackerX v2.0.1\n\n"
             "Java 程序防逆向加密混淆工具\n"
             "支持 Paper / Bukkit 插件与 Fabric 模组\n"
             "基于 native-obfuscator\n\n"
