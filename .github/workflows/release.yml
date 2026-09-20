@@ -261,4 +261,9 @@ jobs:
           else
             gh release create "$TAG" ./* --title "$TAG" --generate-notes
           fi
+          # 收尾自检:确认 Release **真的**存在、不是草稿、产物齐。
+          # 出现过"发布步骤退出码 0 但 Release 没了"的情况(标签被删时 GitHub
+          # 会把 Release 一并删掉,而并发的那次运行仍然报成功)—— 不查就发现不了。
+          gh release view "$TAG" --json tagName,isDraft,url,assets \
+            --jq '"Release OK: \(.url)  草稿=\(.isDraft)  产物数=\(.assets|length)"'
           echo "https://github.com/$GH_REPO/releases/tag/$TAG"
