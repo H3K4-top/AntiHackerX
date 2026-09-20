@@ -1,6 +1,7 @@
 #include "packer_pipeline.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
 #include <QElapsedTimer>
@@ -265,6 +266,33 @@ QString firstExisting(const QStringList &candidates) {
     return QString();
 }
 
+/**
+ * 多份都存在时取**修改时间较新**的那一份。
+ *
+ * 为什么不是简单地"按列表顺序取第一个":同一依赖确实会同时存在两份 ——
+ * 引导流程把便携版下到 `bin/libs/`,而开发机仓库里还有一份自己构建的
+ * `jar-obfuscator/target/*.jar`。固定优先便携版的话,开发机改了 fork 却
+ * 会静默跑旧的发布版,排查"改了没生效"要花掉一整轮。
+ *
+ * 实际用哪一份会写进打包日志(见 stepObfuscateUser),不用猜。
+ */
+QString newestExisting(const QStringList &candidates) {
+    QString best;
+    QDateTime bestTime;
+    for (const QString &candidate : candidates) {
+        const QFileInfo info(candidate);
+        if (!info.exists() || info.size() <= 0) {
+            continue;
+        }
+        const QDateTime modified = info.lastModified();
+        if (best.isEmpty() || modified > bestTime) {
+            best = info.absoluteFilePath();
+            bestTime = modified;
+        }
+    }
+    return best;
+}
+
 /** 递归收集指定后缀的文件 */
 QStringList collectBySuffix(const QString &dir, const QStringList &suffixes) {
     QStringList out;
@@ -392,7 +420,7 @@ PackerPipeline::Config PackerPipeline::defaultConfig() {
     // zig 交叉编译需要 JNI 头文件(jni.h / jni_md.h),它们位于 $JAVA_HOME/include
     config.javaHome = qEnvironmentVariable("JAVA_HOME");
 
-    config.obfuscatorJar = firstExisting({
+    config.obfuscatorJar = newestExisting({
         appDir + "/libs/jar-obfuscator-2.0.1-jar-with-dependencies.jar",
         projectRoot + "/jar-obfuscator/target/jar-obfuscator-2.0.1-jar-with-dependencies.jar",
     });
@@ -966,6 +994,10 @@ bool PackerPipeline::stepObfuscateUser(const Config &config, const QString &work
     }
     emit log(QStringLiteral("主类已拉黑不改名: %1").arg(config.originalMainClass));
     emit log(QStringLiteral("字符串解密器类: %1").arg(m_userDecryptClass));
+    // 把实际使用的混淆器路径写出来:磁盘上可能同时存在多份(便携下载到
+    // libs/ 的那份、开发机上仓库 target/ 里那份),混淆行为不一致时
+    // 第一件事就是确认"到底跑了哪个",没有这行日志只能猜。
+    emit log(QStringLiteral("混淆器: %1").arg(config.obfuscatorJar));
 
     {
         QStringList args;

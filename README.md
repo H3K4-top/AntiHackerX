@@ -210,8 +210,10 @@ cmake --build . --config Release
 首次启动会带进度条自动拉齐依赖:
 
 1. 检测 Java —— 没有就询问是否下载便携版 JDK(约 190 MB),下完自动设置 `JAVA_HOME`
-2. 从本项目的 GitHub Release 取 `native-obfuscator` 与 `jar-obfuscator`
-3. **第一次真正走到原生编译时**,再按需下载便携版 zig(自带 Clang,约 50 MB)
+2. 取 `jar-obfuscator` —— 直接拿**本仓库最新发行版**里的那个 fat jar
+   (`releases/latest/download/...`,发新版本后无需改代码)
+3. 取 `native-obfuscator` —— 来自 NOBF fork 仓库的 Release
+4. **第一次真正走到原生编译时**,再按需下载便携版 zig(自带 Clang,约 50 MB)
 
 不想看到这些步骤,可以提前手动放好 `java/` 与 `libs/`。
 

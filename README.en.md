@@ -231,8 +231,10 @@ On first launch dependencies are fetched with a progress bar:
 
 1. Java is detected — if absent you are asked whether to download a portable JDK (~190 MB),
    after which `JAVA_HOME` is set automatically;
-2. `native-obfuscator` and `jar-obfuscator` are fetched from this project's GitHub releases;
-3. **the first time native compilation is actually needed**, a portable zig (~50 MB) is
+2. `jar-obfuscator` is taken from the **latest release of this repository**
+   (`releases/latest/download/...`, so new releases need no code change);
+3. `native-obfuscator` comes from the release of the NOBF fork repository;
+4. **the first time native compilation is actually needed**, a portable zig (~50 MB) is
    downloaded on demand.
 
 To skip all of this, place `java/` and `libs/` next to the binary yourself.

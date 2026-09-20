@@ -511,7 +511,8 @@ void MainWindow::onRedownloadDependency() {
     // —— 那是全局覆盖光标,会把下载窗的按钮也变成"等待",看起来像卡死。
     RuntimeBootstrap bootstrap(this);
     connect(&bootstrap, &RuntimeBootstrap::logMessage, this, &MainWindow::appendLog);
-    const bool ok = bootstrap.refreshNativeObfuscator();
+    const bool ok = bootstrap.refreshNativeObfuscator()
+            && bootstrap.refreshJarObfuscator();
 
     if (ok) {
         controller->setObfuscatorJarPath(bootstrap.obfuscatorJarPath());

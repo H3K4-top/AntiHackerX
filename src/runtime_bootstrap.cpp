@@ -41,10 +41,57 @@ const char *kReleasePageUrl =
 /// 装在同一台服务器上就会 LinkageError。
 const char *kFallbackReleaseTag = "v1.4.8";
 
+/// jar-obfuscator 的资产名。
+///
+/// ⚠️ 这个名字必须与打包器在磁盘上查找的**逐字一致**
+/// (packer_pipeline.cpp 找的是 `libs/jar-obfuscator-2.0.1-jar-with-dependencies.jar`)。
+/// 上游 pom 的版本号变了就得两边一起改,否则症状是"依赖明明下好了,打包却说找不到"。
+const char *kJarObfuscatorAsset = "jar-obfuscator-2.0.1-jar-with-dependencies.jar";
+
+/// jar-obfuscator 与 AntiHackerX 在**同一个仓库**发版:每次 Release 都把 CI
+/// 从源码构建的 fork fat jar 作为资产一起上传。
+const char *kJarObfuscatorReleaseRoot =
+    "https://github.com/H3K4-top/AntiHackerX/releases";
+
+/// ⚠️ GitHub 的下载路径有**两种形状,`latest` 的位置不一样**,极容易写错:
+///
+///   指定标签  : `<root>/download/<标签>/<资产名>`      例 .../download/v2.0.0/x.jar
+///   最新发行版: `<root>/latest/download/<资产名>`      ← latest 在 download **之前**
+///
+/// 写成 `<root>/download/latest/<资产名>` 是 **404**(已实测)。用"最新发行版"
+/// 这种形状的好处是:**发新版本后这里一个字都不用改**,也不用查 API(没有限流)。
+QString jarObfuscatorLatestUrl() {
+    return QString("%1/latest/download/%2")
+        .arg(QString::fromLatin1(kJarObfuscatorReleaseRoot),
+             QString::fromLatin1(kJarObfuscatorAsset));
+}
+
 /// 由标签推出分发包的下载地址(资产命名规律:native-obfuscator-<tag>.zip)
 QString releaseZipUrlForTag(const QString &tag) {
     return QString("%1/download/%2/native-obfuscator-%2.zip")
         .arg(QString::fromLatin1(kReleasePageUrl), tag);
+}
+
+/// 粗略但足够可靠的产物校验,专拦"下载到 404 页面 / 半截文件"这类东西。
+///
+/// 为什么需要:这类失败在下载环节看起来是"成功"的,要到打包阶段才炸,
+/// 而那时的报错完全指不到下载环节 —— 又得从头查一遍。
+bool looksLikeZipArchive(const QString &path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+    const qint64 size = file.size();
+    // fat jar 约 850 KB;GitHub 的 404 页面只有几十 KB
+    if (size < 200 * 1024) {
+        return false;
+    }
+    // ZIP 的"中央目录结束记录"签名 PK\x05\x06(带注释时不在末尾,所以扫尾部一小段)
+    const qint64 window = qMin<qint64>(size, 1024);
+    if (!file.seek(size - window)) {
+        return false;
+    }
+    return file.read(window).contains(QByteArrayLiteral("PK\x05\x06"));
 }
 
 /// 标签 `v1.4.8` → `1.4.8`,先归一化才能和 jar 自己报的版本号比较
@@ -257,6 +304,11 @@ QString RuntimeBootstrap::bundledJavaExecutable(const QString &root) {
 
 QString RuntimeBootstrap::jarPathForRoot(const QString &root) {
     return QDir(root).filePath(QStringLiteral("libs/native-obfuscator.jar"));
+}
+
+QString RuntimeBootstrap::jarObfuscatorPathForRoot(const QString &root) {
+    return QDir(root).filePath(QStringLiteral("libs/")
+                               + QString::fromLatin1(kJarObfuscatorAsset));
 }
 
 QString RuntimeBootstrap::zigRootForRoot(const QString &root) {
@@ -481,6 +533,10 @@ bool RuntimeBootstrap::ensureReady() {
     if (!ensureNativeObfuscator()) {
         return false;
     }
+    // jar-obfuscator:与 native-obfuscator 不同,拿不到它**不算致命** ——
+    // 开发者往往直接用仓库里自己构建的那份,离线时更应该继续启动,
+    // 真正缺它会在打包第一步给出明确报错。
+    ensureJarObfuscator();
     if (!ensureCppToolchain()) {
         return false;
     }
@@ -1098,6 +1154,78 @@ bool RuntimeBootstrap::refreshNativeObfuscator() {
         QFile::remove(jar);
     }
     return ensureNativeObfuscator();
+}
+
+bool RuntimeBootstrap::refreshJarObfuscator() {
+    ensureRoot();
+    m_error.clear();
+    // 强制重下:先删掉旧的(半截文件比"没有文件"更难查)
+    const QString target = jarObfuscatorPathForRoot(m_root);
+    if (QFileInfo::exists(target)) {
+        QFile::remove(target);
+    }
+    return ensureJarObfuscator();
+}
+
+bool RuntimeBootstrap::ensureJarObfuscator() {
+    const QString target = jarObfuscatorPathForRoot(m_root);
+    if (QFileInfo(target).size() > 0) {
+        appendLog(QString("[依赖] jar-obfuscator 已就绪: %1").arg(target));
+        return true;
+    }
+
+    // 直接取"最新发行版"里的资产:地址是 GitHub 的固定入口,发新版本后无需改代码。
+    const QString url = jarObfuscatorLatestUrl();
+    appendLog(QString("[依赖] 下载最新发行版里的 jar-obfuscator:%1").arg(url));
+
+    // 先下到临时目录、校验通过再搬到目标位置 —— 直接下到目标位置的话,
+    // 中途失败会留下一个"存在但是坏的"文件,下次启动会当成已有依赖跳过。
+    const QString staging = stagingRoot();
+    Archive::removeDirectoryRecursively(staging);
+    if (!QDir().mkpath(staging)) {
+        appendLog(QString("[依赖] 无法创建临时目录: %1").arg(staging));
+        return true;
+    }
+
+    const QString staged =
+        QDir(staging).filePath(QString::fromLatin1(kJarObfuscatorAsset));
+    QString error;
+    const bool downloaded =
+        runDownloadWithDialog(QStringLiteral("下载运行依赖"),
+                              QStringLiteral("正在获取 jar-obfuscator"
+                                             "(取最新发行版中的资产)。"),
+                              QStringLiteral("正在下载依赖:"),
+                              QUrl(url),
+                              staged,
+                              &error);
+
+    if (!downloaded || !looksLikeZipArchive(staged)) {
+        Archive::removeDirectoryRecursively(staging);
+        m_error = downloaded ? QStringLiteral("下载到的文件不是有效的 jar-obfuscator 包")
+                             : error;
+        appendLog(QString("[依赖] jar-obfuscator 获取失败: %1").arg(m_error));
+        appendLog(QStringLiteral("[依赖] 混淆功能暂不可用,"
+                                 "可用菜单「重新下载依赖」重试"));
+        // 不弹窗、不阻止启动:这只影响混淆,而且开发者常常直接用仓库里
+        // 自己构建的那一份(打包器会退回到仓库的 target/ 产物)。
+        return true;
+    }
+
+    QDir().mkpath(QFileInfo(target).absolutePath());
+    QFile::remove(target);
+    const bool installed = QFile::copy(staged, target)
+            && QFileInfo(target).size() == QFileInfo(staged).size();
+    Archive::removeDirectoryRecursively(staging);
+    if (!installed) {
+        QFile::remove(target);
+        m_error = QString("无法把依赖安装到 %1").arg(target);
+        appendLog(QString("[依赖] %1").arg(m_error));
+        return true;
+    }
+
+    appendLog(QString("[依赖] jar-obfuscator 已就绪: %1(%2)")
+                  .arg(target, DownloadUtil::humanBytes(QFileInfo(target).size())));
+    return true;
 }
 
 bool RuntimeBootstrap::runDownloadWithDialog(const QString &title,

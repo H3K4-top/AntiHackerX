@@ -38,6 +38,9 @@ public:
     /// 强制重新下载 native-obfuscator 依赖(供主窗口"重新下载依赖"菜单调用)
     bool refreshNativeObfuscator();
 
+    /// 强制重新下载 jar-obfuscator 依赖(同上,取最新发行版里的那份)
+    bool refreshJarObfuscator();
+
     /// 强制重新安装便携版 Java(供主窗口"重新安装 Java"菜单调用)
     bool installPortableJava();
 
@@ -60,6 +63,9 @@ public:
 
     /// 依赖 jar 相对于安装根目录的固定位置
     static QString jarPathForRoot(const QString &root);
+    /// jar-obfuscator 相对于安装根目录的固定位置
+    /// (文件名必须与打包器查找的一致,见 .cpp 里的说明)
+    static QString jarObfuscatorPathForRoot(const QString &root);
     /// 便携版 Java 主程序路径
     static QString bundledJavaExecutable(const QString &root);
     /// 便携版 C++ 工具链(zig)的根目录
@@ -88,6 +94,9 @@ signals:
 private:
     bool ensureJava();
     bool ensureNativeObfuscator();
+    /// 确保 jar-obfuscator 就绪(缺失时从最新发行版下载)。
+    /// 失败不算致命,所以恒返回 true —— 见 .cpp 里的说明。
+    bool ensureJarObfuscator();
     bool ensureCppToolchain();
     bool downloadNativeObfuscatorArchive(const QString &zipUrl, QString *errorOut);
 
