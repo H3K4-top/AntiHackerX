@@ -177,8 +177,9 @@ void MainWindow::createMenuBar() {
     QAction *aboutAction = new QAction("关于(&A)...", this);
     connect(aboutAction, &QAction::triggered, [this]() {
         QMessageBox::about(this, "关于 AntiHackerX",
-            "AntiHackerX v1.0.0\n\n"
+            "AntiHackerX v2.0.0\n\n"
             "Java 程序防逆向加密混淆工具\n"
+            "支持 Paper / Bukkit 插件与 Fabric 模组\n"
             "基于 native-obfuscator\n\n"
             "许可证: GNU GPL v3.0\n"
             "© 2026 H3K4");
@@ -281,23 +282,25 @@ void MainWindow::createCentralWidget() {
     lblOutputJar->setTextInteractionFlags(Qt::TextSelectableByMouse);
     packLayout->addWidget(lblOutputJar, 0, 3, 1, 3);
 
-    // ---- 服务端 API / 依赖 ---- 
-    // Bukkit 插件对服务端 API 是 provided 作用域,插件 JAR 里没有 org.bukkit.*,
-    // 而验证模块的 Paper 入口要 extends JavaPlugin —— 不给这份就编不过。
-    packLayout->addWidget(new QLabel("服务端 API:", packGroup), 1, 0);
+    // ---- 平台 API / 依赖 ----
+    // 加固后的桥类要引用平台的入口类型(Paper 的 JavaPlugin、Fabric 的
+    // PreLaunchEntrypoint),而它们在目标 JAR 里都是 provided 作用域 —— 不给
+    // 一份就编译不过。
+    packLayout->addWidget(new QLabel("平台 API:", packGroup), 1, 0);
     lblExtraLibs = new QLabel(QStringLiteral("未指定(普通 JAR 不需要)"), packGroup);
     lblExtraLibs->setStyleSheet(
         "QLabel { padding: 4px; border: 1px solid #ccc; background: #f9f9f9; }");
     lblExtraLibs->setTextInteractionFlags(Qt::TextSelectableByMouse);
     lblExtraLibs->setToolTip(
-        "Paper/Bukkit 插件**必须**指定,否则验证模块编译不过。\n"
-        "指到服务端 JAR(paper-xxx.jar)或服务端的 libraries/ 目录即可。");
+        "Minecraft 插件 / 模组**必须**指定,否则验证模块编译不过。\n"
+        "Paper:指到服务端 JAR(paper-xxx.jar)或服务端的 libraries/ 目录。\n"
+        "Fabric:指到 fabric-loader 的 jar(或者放它的目录)。");
     packLayout->addWidget(lblExtraLibs, 1, 1, 1, 3);
 
     QPushButton *btnExtraFile = new QPushButton(QStringLiteral("选 JAR..."), packGroup);
     QPushButton *btnExtraDir = new QPushButton(QStringLiteral("选目录..."), packGroup);
     QPushButton *btnExtraClear = new QPushButton(QStringLiteral("清空"), packGroup);
-    btnExtraFile->setToolTip("选服务端 JAR / paper-api jar,可多选");
+    btnExtraFile->setToolTip("选平台 API jar(服务端 JAR / fabric-loader),可多选");
     btnExtraDir->setToolTip("选服务端的 libraries/ 目录,会递归展开其中的 jar");
     packLayout->addWidget(btnExtraFile, 1, 4);
     packLayout->addWidget(btnExtraDir, 1, 5);
@@ -663,8 +666,10 @@ void MainWindow::onStartObfuscation() {
     appendLog(QString("输出    : %1").arg(config.outputJar));
     appendLog(QString("入口模板: %1")
                       .arg(config.verifyOptions.kind == VerifyModule::Kind::BukkitPlugin
-                                   ? "Paper 插件(JavaPlugin 委托)"
-                                   : "普通 JAR(Main-Class)"));
+                                   ? "Minecraft 插件(JavaPlugin 委托)"
+                                   : (config.verifyOptions.kind == VerifyModule::Kind::FabricMod
+                                              ? "Fabric MOD(PreLaunchEntrypoint)"
+                                              : "普通 JAR(Main-Class)")));
     appendLog(QString("主类    : %1 -> 由生成的入口拉起").arg(config.originalMainClass));
     appendLog(QString("混淆强度: %1")
                       .arg(config.enableJunk
@@ -867,16 +872,17 @@ void MainWindow::analyzeAndDisplayJar(const QString &jarPath) {
         appendLog(QString("  版本: %1").arg(result.version));
     }
 
-    // Paper 插件:自动扫描可转换为 C++ 的类,并同步配置面板
-    if (result.type == JarType::MinecraftPaperPlugin) {
+    // Minecraft 插件 / 模组:自动扫描可转换为 C++ 的类,并同步配置面板
+    if (result.type == JarType::MinecraftPaperPlugin
+        || result.type == JarType::MinecraftFabricMod) {
         if (grpPaperPlugin) {
-            QString title = "Minecraft Paper 插件加固配置";
+            QString title = "Minecraft 插件 / 模组加固配置";
             if (!result.pluginName.isEmpty()) {
                 title += QString(" —— %1").arg(result.pluginName);
             }
             grpPaperPlugin->setTitle(title);
         }
-        appendLog("检测到 Paper 插件,开始扫描可加固的类...");
+        appendLog(QString("检测到 %1,开始扫描可加固的类...").arg(result.typeName));
         onScanClasses();
     } else {
         // 其他类型:清空类列表并给出说明
@@ -885,7 +891,7 @@ void MainWindow::analyzeAndDisplayJar(const QString &jarPath) {
         }
         if (lblScanSummary) {
             lblScanSummary->setText(
-                QString("当前文件类型为「%1」,Paper 插件加固配置仅适用于 Paper 插件。")
+                QString("当前文件类型为「%1」,该类加固配置仅适用于 Minecraft 插件 / 模组。")
                     .arg(result.typeName));
         }
         classScanResult = ClassScanResult();
@@ -955,7 +961,7 @@ void MainWindow::updateJarInfo(const JarAnalysisResult &result) {
 // ===========================================================================
 
 QGroupBox *MainWindow::createPaperPluginGroup(QWidget *parent) {
-    QGroupBox *group = new QGroupBox("Minecraft Paper 插件加固配置", parent);
+    QGroupBox *group = new QGroupBox("Minecraft 插件 / 模组加固配置", parent);
     QVBoxLayout *groupLayout = new QVBoxLayout(group);
     groupLayout->setSpacing(4);
 
@@ -983,7 +989,7 @@ QGroupBox *MainWindow::createPaperPluginGroup(QWidget *parent) {
     chkCopyright->setToolTip(
             "启动时展示加壳程序的版权与许可证信息。\n"
             "有桌面环境弹窗;服务器等无头环境自动改为写日志。\n"
-            "Paper 插件一律只写日志 —— 弹框会阻塞插件启用。");
+            "Minecraft 插件 / 模组里一律只写日志 —— 弹框会阻塞启动。");
     chkCopyright->setChecked(true);
 
     protectLayout->addWidget(chkAntiDebug, 0, 0);
@@ -1178,7 +1184,7 @@ QGroupBox *MainWindow::createPaperPluginGroup(QWidget *parent) {
     classLayout->addLayout(toolLayout);
 
     lblScanSummary = new QLabel(
-        "尚未扫描。选择 Paper 插件 JAR 后会自动扫描,也可手动点击左侧按钮。", classGroup);
+        "尚未扫描。选择 Minecraft 插件 / 模组 JAR 后会自动扫描,也可手动点击左侧按钮。", classGroup);
     lblScanSummary->setWordWrap(true);
     lblScanSummary->setStyleSheet("QLabel { color: #616161; }");
     classLayout->addWidget(lblScanSummary);
@@ -1381,10 +1387,13 @@ VerifyModule::Options MainWindow::currentVerifyOptions() const {
     options.showCopyright = !chkCopyright || chkCopyright->isChecked();
 
     // 入口模板跟着 JAR 类型走:Paper 插件要用 JavaPlugin 委托,
+    // Fabric MOD 要用 PreLaunchEntrypoint 自己拉起入口,
     // 普通 JAR 用标准 Main-Class。
     options.kind = (currentJarResult.type == JarType::MinecraftPaperPlugin)
             ? VerifyModule::Kind::BukkitPlugin
-            : VerifyModule::Kind::Plain;
+            : (currentJarResult.type == JarType::MinecraftFabricMod)
+              ? VerifyModule::Kind::FabricMod
+              : VerifyModule::Kind::Plain;
     return options;
 }
 
@@ -1431,7 +1440,7 @@ void MainWindow::updateExtraLibsLabel() {
     if (extraClassPath.isEmpty()) {
         lblExtraLibs->setText(QStringLiteral("未指定(普通 JAR 不需要)"));
         lblExtraLibs->setToolTip(
-                "Paper/Bukkit 插件**必须**指定,否则验证模块编译不过。");
+                "Minecraft 插件 / 模组**必须**指定平台 API,否则验证模块编译不过。");
         return;
     }
     lblExtraLibs->setText(QStringLiteral("%1 项:%2")
@@ -1582,6 +1591,8 @@ bool MainWindow::buildPipelineConfig(PackerPipeline::Config &config,
         config.enableHideMethod = chkObfHideMethod->isChecked();
         config.enableHideField = chkObfHideField->isChecked();
         config.enableAiNotice = chkObfAiNotice->isChecked();
+        // Fabric 要改写 fabric.mod.json、把 mixin 类固定为明文 —— 都在流水线里
+        config.fabricMod = (currentJarResult.type == JarType::MinecraftFabricMod);
 
         // 关掉类名混淆后主类不会被改名,但仍然要靠 plugin.yml 找到它 ——
         // 这条路径上游已经能处理(映射表里没有主类条目时按原名继续)。
@@ -1597,12 +1608,12 @@ bool MainWindow::buildPipelineConfig(PackerPipeline::Config &config,
     // 表里给的是原始类名,流水线会在改名映射里把它们翻成混淆后的名字。
     config.hideClasses = selectedHideClasses();
 
-    // Paper/Bukkit 插件必须给服务端 API,否则验证模块编不过
+    // Minecraft 插件 / 模组必须给平台 API,否则验证模块编不过
     config.extraClassPath = extraClassPath;
     if (config.verifyOptions.kind == VerifyModule::Kind::BukkitPlugin
         && extraClassPath.isEmpty()) {
         errorMessage = QStringLiteral(
-                "这是 Paper/Bukkit 插件,但没指定服务端 API。\n\n"
+                "这是 Minecraft 插件,但没指定平台 API。\n\n"
                 "插件 JAR 里不含 org.bukkit.*(那是服务端在运行时提供的),\n"
                 "不给一份的话验证模块编译不过。\n\n"
                 "请在「打包设置 → 服务端 API」里选服务端 JAR(如 paper-xxx.jar),\n"

@@ -106,6 +106,12 @@ public:
         bool enableHideMethod = true;         // IDEA 反编译时隐藏方法
         bool enableHideField = true;          // IDEA 反编译时隐藏字段
         bool enableAiNotice = false;          // AI 提示词注入(默认关:只是抬高成本)
+        /** 目标是 Fabric MOD。
+         *
+         *  <p>影响三件事:入口模板换成 {@code PreLaunchEntrypoint}、
+         *  {@code fabric.mod.json} 的 entrypoints 被改写成一个 {@code preLaunch}、
+         *  以及 mixin 类必须明文且冻结改名。</p> */
+        bool fabricMod = false;
     };
 
     explicit PackerPipeline(QObject *parent = nullptr);
@@ -261,6 +267,32 @@ private:
      *  解密器类;而 AhxClassLoader 是父优先,用户类的字符串解密调用会被父加载器
      *  (模块)的同名类截胡,解出 null,见 stepObfuscateModule 的注释。 */
     QString m_userDecryptClass;
+
+    // ===== Fabric 专用(由 stepPrepareFabricMod 填,后面的步骤消费) =====
+
+    /** 必须保持明文的类(内部名):mixin 类。
+     *  Mixin 框架自己从 JAR 里按名字读字节,不走 Class.forName —— 加密了它就看不到。 */
+    QStringList m_fabricKeepPlain;
+    /** 必须冻结改名的类:mixin 类({@code mixins.json} 用字符串引用它们)
+     *  与桥类({@code fabric.mod.json} 用字符串引用它)。 */
+    QStringList m_fabricFrozen;
+    /** 资源覆盖({@code entryPath=文件路径}),目前就一项:改写后的 fabric.mod.json。 */
+    QStringList m_fabricResourceOverrides;
+
+    /**
+     * Fabric MOD 的打包前准备(在混淆用户 JAR **之前**调用)。
+     *
+     * <p>从输入 JAR 里读 {@code fabric.mod.json} 与所有 {@code *.mixins.json}:
+     * 后者决定哪些类必须明文且冻结改名(第一阶段不重写 mixins.json,所以
+     * mixin 类名只能冻结);前者被改写成只留一个指向桥类的 {@code preLaunch}
+     * —— 原有的 {@code entrypoints} 整段抹掉,真实入口名不留痕迹。</p>
+     *
+     * @param bridgeClass 桥类全限定名({@code fabric.mod.json} 要写它)
+     */
+    bool stepPrepareFabricMod(const Config &config,
+                              const QString &inputJar,
+                              const QString &bridgeClass,
+                              QString &errorMessage);
 };
 
 #endif // PACKER_PIPELINE_H

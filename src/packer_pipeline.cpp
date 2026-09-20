@@ -12,6 +12,12 @@
 #include <QThread>
 
 #include <QCryptographicHash>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
+
+#include "archive.h"
 #include <QRandomGenerator>
 
 #include <unzip.h>
@@ -462,6 +468,21 @@ void PackerPipeline::run(const Config &config) {
 
     int step = 0;
 
+    // ---- 0. Fabric:读元数据 + 改写 fabric.mod.json ----
+    // 必须在混淆**之前**:混淆要用到“哪些类冻结改名”,而那份名单是从
+    // mixins.json 里读出来的。
+    QString fabricBridge;
+    if (config.fabricMod) {
+        fabricBridge = VerifyModule::bootstrapClassNameFor(config.originalMainClass);
+        emit log(QStringLiteral("检测到 Fabric MOD,桥类: %1").arg(fabricBridge));
+        if (!stepPrepareFabricMod(config, config.inputJar, fabricBridge, error)) {
+            fail(QStringLiteral("读取 Fabric 元数据"));
+            return;
+        }
+        emit log(QStringLiteral("mixin 类(明文 + 冻结改名): %1 个")
+                         .arg(m_fabricKeepPlain.size()));
+    }
+
     // ---- 1. 混淆用户 JAR ----
     emit staged(++step, kTotalSteps, QStringLiteral("混淆用户 JAR"));
     QString userJar;
@@ -763,8 +784,14 @@ void PackerPipeline::run(const Config &config) {
     }
 
     if (!stepFinalPack(config, userNativeJar, injectDir, keyHex,
-                       targetClass, entryClass, signKeyPath, error)) {
-        fail(QStringLiteral("加密与合并"));
+                         // Fabric:真实入口完全藏进载荷,所以:
+                         //   mainClass 传桥类(避免 MANIFEST 里泄露真实入口名),
+                         //   bridgeClass 传空(不重定向任何类的父类 ——
+                         //   Fabric 没有 JavaPlugin 那种单实例硬检查,
+                         //   入口是我们自己反射调用的)。
+                         config.fabricMod ? fabricBridge : targetClass,
+                         config.fabricMod ? QString() : entryClass,
+                         signKeyPath, error)) {
         return;
     }
 
@@ -783,6 +810,111 @@ void PackerPipeline::run(const Config &config) {
 // ---------------------------------------------------------------------------
 // 步骤实现
 // ---------------------------------------------------------------------------
+
+bool PackerPipeline::stepPrepareFabricMod(const Config &config,
+                                          const QString &inputJar,
+                                          const QString &bridgeClass,
+                                          QString &errorMessage) {
+    m_fabricKeepPlain.clear();
+    m_fabricFrozen.clear();
+    m_fabricResourceOverrides.clear();
+
+    // 元数据落地目录。放输出 JAR 旁边,解压完就留着 —— 改写后的
+    // fabric.mod.json 要到 stepFinalPack 才被用上。
+    const QString metaDir = QDir(QFileInfo(config.outputJar).absolutePath())
+                                    .filePath(QStringLiteral("ahx-fabric-meta"));
+    Archive::removeDirectoryRecursively(metaDir);
+    if (!Archive::extract(inputJar, metaDir, &errorMessage)) {
+        errorMessage = QStringLiteral("解开 JAR 读 Fabric 元数据失败:%1").arg(errorMessage);
+        return false;
+    }
+
+    // ---- 1. mixins:哪些类必须明文 + 冻结改名 ----
+    //
+    // 第一阶段不重写 *.mixins.json(那要动 jar-obfuscator 的 ResourceTransformer),
+    // 所以 mixin 类名只能冻结不改。但**明文**是硬性的:Mixin 框架自己从 JAR 里
+    // 按名字读字节,不走 Class.forName,加密了它就看不到这个类。
+    QDirIterator it(metaDir, { QStringLiteral("*.mixins.json") },
+                    QDir::Files, QDirIterator::Subdirectories);
+    int mixinConfigs = 0;
+    while (it.hasNext()) {
+        const QString path = it.next();
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly)) {
+            continue;
+        }
+        const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+        const QString pkg = root.value(QStringLiteral("package")).toString();
+        const QString prefix = pkg.isEmpty() ? QString() : pkg + QLatin1Char('.');
+        ++mixinConfigs;
+
+        const QStringList keys = { QStringLiteral("mixins"), QStringLiteral("client"),
+                                   QStringLiteral("server") };
+        for (const QString &key : keys) {
+            const QJsonArray list = root.value(key).toArray();
+            for (const QJsonValue &value : list) {
+                // 两种写法都要认:字符串,或者带 class 字段的对象
+                QString name = value.isString()
+                        ? value.toString()
+                        : (value.isObject()
+                           ? value.toObject().value(QStringLiteral("class")).toString()
+                           : QString());
+                name = name.trimmed();
+                if (name.isEmpty()) {
+                    continue;
+                }
+                const QString full = name.contains(QLatin1Char('.')) ? name : prefix + name;
+                m_fabricKeepPlain << full;
+                m_fabricFrozen << full;
+            }
+        }
+    }
+    m_fabricKeepPlain.removeDuplicates();
+    m_fabricFrozen.removeDuplicates();
+
+    // ---- 2. fabric.mod.json:抹掉 entrypoints,只留指向桥类的 preLaunch ----
+    const QString modJsonPath = QDir(metaDir).filePath(QStringLiteral("fabric.mod.json"));
+    QFile modJsonFile(modJsonPath);
+    if (!modJsonFile.exists() || !modJsonFile.open(QIODevice::ReadOnly)) {
+        errorMessage = QStringLiteral("输入 JAR 里没有 fabric.mod.json,不是 Fabric MOD");
+        return false;
+    }
+    QJsonObject mod = QJsonDocument::fromJson(modJsonFile.readAll()).object();
+    modJsonFile.close();
+
+    const QJsonObject original = mod.value(QStringLiteral("entrypoints")).toObject();
+    int erased = 0;
+    for (auto entry = original.begin(); entry != original.end(); ++entry) {
+        erased += entry.value().toArray().size();
+    }
+
+    // 四个阶段都指向桥类:载荷由 preLaunch 装好,真实入口由 Fabric 在各自阶段
+    // 回调时再拉起 —— **不能**在 preLaunch 就把 client 入口拉起来,那时游戏
+    // 还没初始化(实测:voicechat 会去注册按键绑定,MinecraftClient 还是 null)。
+    QJsonObject entrypoints;
+    entrypoints.insert(QStringLiteral("preLaunch"), QJsonArray{ bridgeClass });
+    entrypoints.insert(QStringLiteral("main"), QJsonArray{ bridgeClass });
+    entrypoints.insert(QStringLiteral("client"), QJsonArray{ bridgeClass });
+    entrypoints.insert(QStringLiteral("server"), QJsonArray{ bridgeClass });
+    mod.insert(QStringLiteral("entrypoints"), entrypoints);
+
+    const QString rewritten = metaDir + QStringLiteral("/fabric.mod.json.ahx");
+    if (!writeFile(rewritten,
+                   QString::fromUtf8(QJsonDocument(mod).toJson(QJsonDocument::Indented)),
+                   errorMessage)) {
+        return false;
+    }
+    m_fabricResourceOverrides << QStringLiteral("fabric.mod.json=") + rewritten;
+    m_fabricFrozen << bridgeClass;
+    m_fabricFrozen.removeDuplicates();
+
+    emit log(QStringLiteral("Fabric 元数据: %1 个 mixins 配置,抹除 %2 项 entrypoint,"
+                            "改为 preLaunch → %3")
+                     .arg(mixinConfigs)
+                     .arg(erased)
+                     .arg(bridgeClass));
+    return true;
+}
 
 bool PackerPipeline::stepObfuscateUser(const Config &config, const QString &workDir,
                                        QString &userJar, QString &mappingFile,
@@ -805,6 +937,15 @@ bool PackerPipeline::stepObfuscateUser(const Config &config, const QString &work
     QStringList blackClass;
     if (!config.originalMainClass.trimmed().isEmpty()) {
         blackClass << config.originalMainClass.trimmed();
+    }
+    // Fabric:桥类与 mixin 类必须冻结改名。
+    // 前者被 fabric.mod.json 用字符串引用,后者被 *.mixins.json 用字符串引用
+    // —— 第一阶段不重写那两个 JSON,所以名字一动 mod 就崩。
+    for (const QString &frozen : m_fabricFrozen) {
+        const QString trimmed = frozen.trimmed();
+        if (!trimmed.isEmpty() && !blackClass.contains(trimmed)) {
+            blackClass << trimmed;
+        }
     }
     // 第三方库用正则整体拉黑(否则会破坏反射/序列化等).
     const QStringList blackRegex = {
@@ -1545,6 +1686,16 @@ bool PackerPipeline::stepFinalPack(const Config &config,
     packerArgs << packerSrc
                << payloadSourceJar << config.outputJar
                << injectDir << keyHex << mainClass << bridgeClass;
+    // Fabric 的两份额外输入:必须明文的 mixin 类,以及改写后的 fabric.mod.json。
+    // 改写在算签名之前发生(AhxPacker 内部先覆盖资源再签名),
+    // 否则签名盖的是旧字节,产物一启动就报“文件已被修改”。
+    if (!m_fabricKeepPlain.isEmpty()) {
+        packerArgs << QStringLiteral("--keep-plain")
+                   << m_fabricKeepPlain.join(QLatin1Char(','));
+    }
+    for (const QString &override : m_fabricResourceOverrides) {
+        packerArgs << QStringLiteral("--set-resource") << override;
+    }
     if (!signKeyPath.isEmpty()) {
         // 打包末尾对“全部非类文件”算摘要并用这把私钥签名。
         packerArgs << QStringLiteral("--sign-key") << signKeyPath;

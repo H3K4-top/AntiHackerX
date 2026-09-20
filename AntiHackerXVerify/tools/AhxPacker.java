@@ -804,11 +804,27 @@ public final class AhxPacker {
      * <p>剩下的恰好是最要紧的那几样:载荷 {@code p.dat}、原生库 {@code *.so}、
      * {@code plugin.yml} 与全部配置文件。</p>
      */
+    /**
+     * 哪些条目进签名表。
+     *
+     * <p><b>只收我们自己产出的两样东西:</b></p>
+     * <ol>
+     *   <li>{@link #PAYLOAD_ENTRY} —— 加密载荷,整个防护的核心;</li>
+     *   <li>原生库 {@code .so / .dll / .dylib} —— 桥与载荷真正执行的代码。</li>
+     * </ol>
+     *
+     * <p>其余一概不收。这个范围是用真实产物换来的:Paper 会重写每个 class 与
+     * MANIFEST;而 Fabric 这边**启动器**会重新序列化资源与元数据 —— 实测。
+     * {@code fabric.mod.json} 与 {@code icon.png} 都会变字节。拿它们当“未被篡改”
+     * 的基准一启动就误报,而且签名表按字母序、只报第一个不符,
+     * 排查起来像打地鼠。</p>
+     */
     private static boolean isSignedEntry(String name) {
-        if (name.endsWith(".class") || name.startsWith("META-INF/")) {
+        if (SIGN_ENTRY.equals(name)) {
             return false;
         }
-        return !SIGN_ENTRY.equals(name);
+        return PAYLOAD_ENTRY.equals(name)
+                || name.endsWith(".so") || name.endsWith(".dll") || name.endsWith(".dylib");
     }
 
     /**

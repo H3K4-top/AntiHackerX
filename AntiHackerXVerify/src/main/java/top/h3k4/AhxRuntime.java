@@ -11,6 +11,7 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -63,6 +64,16 @@ public final class AhxRuntime {
 
     /** 已定义过的类。重复 defineClass 会抛 LinkageError,必须自己记账。 */
     private static final Map<String, Class<?>> DEFINED = new HashMap<String, Class<?>>();
+
+    /**
+     * 已经拉起过的入口,key = {@code 类全名#方法名}。
+     *
+     * <p>这是防"同一入口被拉起两次"的最后一道保险。mod 的初始化代码几乎都
+     * <b>不幂等</b>(注册包、注册按键、注册方块),被拉起两次就会直接崩。所以
+     * 与其依赖调用方守规矩,不如在这里记账:同一个 (类, 方法) 在一个 JVM 里
+     * 只允许拉起一次。</p>
+     */
+    private static final Set<String> INVOKED = new HashSet<String>();
 
     /** 包名 -> 该包定义器的 Lookup。 */
     private static final Map<String, Object> LOOKUPS = new HashMap<String, Object>();
@@ -140,13 +151,19 @@ public final class AhxRuntime {
             }
         }
         if (!missing.isEmpty()) {
-            // 这个错误基本上只有一个成因:打包器生成的 LINK 里记的是定义器的原名,
-            // 而产物里的定义器被混淆器改了包名(类名黑名单挡不住包路径重命名),
-            // 于是宿主加载器按原名 Class.forName 不到。
-            throw new IllegalStateException(
-                    "有 " + missing.size() + " / " + definers.length
-                    + " 个定义器类在宿主类加载器里找不到(产物里的包名被改过?),例如 "
-                    + missing.get(0));
+            // 这里**不抛**。定义器只在「该包里真有加密类、需要 defineClass」时才是
+            // 必需的 —— 而 AhxRuntime 为每个载荷包都生成了定义器,包括那些
+            // 一个加密类都没有的包。
+            //
+            // Fabric 上实测踩到:某个 mixin 包的所有类都被钉成明文(Mixin 自己读
+            // 字节,加密了它就看不到),可那个包由 Mixin 自己的类加载器管辖,
+            // 我们按名字查不到定义器是正常的,且不影响任何事。
+            //
+            // 真正需要定义某包内的类却找不到定义器时,lookupFor() 会给出准确得多的
+            // 报错(它会说出是哪个包),远好于这里笼统的"67 个里少了 1 个"。
+            System.out.println("[AntiHackerX] 提示: " + missing.size() + " / "
+                    + definers.length + " 个定义器类在当前类加载器里查不到,已跳过("
+                    + missing.get(0) + ") —— 只有该包内存在加密类时才需要它");
         }
     }
 
@@ -719,36 +736,23 @@ public final class AhxRuntime {
     // =======================================================================
 
     /**
-     * Fabric 的三个入口接口与各自的方法名。
+     * 拉起实现了指定入口接口的载荷类。
      *
-     * <p>顺序就是 Fabric 自己的调用顺序:先所有 {@code main},再 client / server。
-     * 有些 mod 依赖这个顺序(主入口先注册内容,client 入口才去注册渲染),
-     * 所以外层循环必须是接口、内层才是类。</p>
-     */
-    private static final String[][] FABRIC_ENTRYPOINTS = {
-            {"net/fabricmc/api/ModInitializer", "onInitialize"},
-            {"net/fabricmc/api/ClientModInitializer", "onInitializeClient"},
-            {"net/fabricmc/api/DedicatedServerModInitializer", "onInitializeServer"},
-    };
-
-    /**
-     * Fabric:把载荷里(以及 JAR 里那些被原生化过的 stub 里)的入口类找出来拉起来。
+     * <p><b>时机由 Fabric 决定,不由我们决定。</b>桥类被同时注册成
+     * preLaunch / main / client / server 四个阶段的入口,Fabric 在正确的时机
+     * 回调我们,每个阶段只拉起对应那一个接口的实现。</p>
      *
-     * <h3>为什么入口类名不在任何地方出现</h3>
+     * <p>为什么不能图省事在 preLaunch 把三个入口全拉起来 —— 真机实测:
+     * voicechat 的客户入口会去注册按键绑定,而那一刻游戏还没初始化,
+     * {@code MinecraftClient.getInstance()} 还是 null,直接 NPE。
+     * Fabric 把 client 阶段放在 MinecraftClient 构造期间是有道理的。</p>
      *
-     * <p>打包时已经把 {@code fabric.mod.json} 里的 {@code entrypoints} 抹掉、换成
-     * 指向本桥的 {@code preLaunch}。这里也**不读任何类名常量**,而是直接扫
-     * 「已经定义进宿主的类」+「本 JAR 里的类」,按<b>实现了哪个接口</b>来判定。</p>
-     *
-     * <p>于是产物里没有任何一处写着"某某类是入口":混淆后的类名照旧,
-     * 而入口特征(接口)只以字节码形式存在,与其它类别无二致。</p>
-     *
-     * <p>两个来源都要扫的原因:被 native-obfuscator 搬进原生库的类不在载荷里,
-     * 它的明文 stub 就在 JAR 内 —— 而 stub 保留了接口声明,所以照样能被认出来。</p>
-     *
+     * @param interfaceInternalName 入口接口的内部名,例如 net/fabricmc/api/ModInitializer
+     * @param methodName            该接口要调的方法名,例如 onInitialize
      * @return 实际拉起的入口个数
      */
-    public static int invokeEntrypoints() throws Exception {
+    public static int invokeEntrypoints(String interfaceInternalName, String methodName)
+            throws Exception {
         if (host == null) {
             throw new IllegalStateException("AhxRuntime 尚未初始化,请先调用 install()");
         }
@@ -759,31 +763,99 @@ public final class AhxRuntime {
         }
         candidates.addAll(jarClassNames());
 
+        final String interfaceName = interfaceInternalName;
+        // 必须排除我们自己的类,否则会**自噬**:桥类为了实现四个阶段回调,
+        // 自己就实现了 ModInitializer / ClientModInitializer / DedicatedServerModInitializer,
+        // 而候选集是"扫 JAR 里所有类" —— 扫到桥自己就会再拉起一遍真实入口。
+        // 实测后果:voicechat 的 "Packet type ... is already registered"。
+        //
+        // 两层排除,缺一不可:
+        //   1) 本模块自己的类 —— 用包名前缀就够(它们和被混淆后的本类同包);
+        //   2) 桥类 —— **不能用包名判断**!模块类会被原生混淆改名(运行期实测是
+        //      lLlLiLliil.LlliLlllLl.*),而桥是冻结明文、包名固定(top.h3k4),
+        //      两者包名压根不同,前缀比较永远不成立 —— 这就是上一版"改了没生效"
+        //      的真正原因,不是产物陈旧。桥只能靠"谁在栈上调用我们"来认。
+        final String ownPrefix = AhxRuntime.class.getPackage().getName() + ".";
+        final String bridge = callerClassName();
         int invoked = 0;
-        for (String[] entry : FABRIC_ENTRYPOINTS) {
-            final String interfaceName = entry[0];
-            final String methodName = entry[1];
-            for (String internal : candidates) {
-                Class<?> type;
-                try {
-                    // 不初始化:只是看一眼接口,别触发对方的静态块
-                    type = Class.forName(internal.replace('/', '.'), false, host);
-                } catch (Throwable unavailable) {
-                    // 缺可选依赖、或者不是这个环境的类(如只有客户端才有的类)
-                    continue;
-                }
-                if (!implementsInterface(type, interfaceName)) {
-                    continue;
-                }
-                invokeEntrypoint(type, methodName);
-                invoked++;
+        for (String internal : candidates) {
+            final String name = internal.replace('/', '.');
+            if (name.startsWith(ownPrefix)) {
+                continue;
             }
+            if (!bridge.isEmpty() && name.equals(bridge)) {
+                System.out.println("[AntiHackerX] 跳过桥自身: " + name);
+                continue;
+            }
+            Class<?> type;
+            try {
+                // 不初始化:只是看一眼接口,别触发对方的静态块
+                type = Class.forName(name, false, host);
+            } catch (Throwable unavailable) {
+                // 缺可选依赖、或者不是这个环境的类(如只有客户端才有的类)
+                continue;
+            }
+            if (!implementsInterface(type, interfaceName)) {
+                continue;
+            }
+            invokeEntrypoint(type, methodName);
+            invoked++;
         }
         return invoked;
     }
 
+    /**
+     * 找出"桥类"的名字 —— 也就是调用 {@link #invokeEntrypoints} 的那个类。
+     *
+     * <p>为什么不靠包名认桥:本模块的类会被原生混淆改名,运行期包名是随机的
+     * (实测 {@code lLlLiLliil.LlliLlllLl}),而桥类是冻结明文、包名固定。
+     * 反之,"谁在栈上调用我们"是<b>运行期事实</b>,改名也改不掉:桥调我们,
+     * 它必然在我们上面一帧,中间只隔反射/JNI。</p>
+     *
+     * <p>于是沿栈向上,跳过本类自身、JDK/反射帧、Fabric Loader 自己的帧,第一个
+     * 剩下的就是桥。认不出来时返回空串 —— 那时还有 {@link #INVOKED} 兜底。</p>
+     */
+    private static String callerClassName() {
+        try {
+            final String self = AhxRuntime.class.getName();
+            for (StackTraceElement frame : Thread.currentThread().getStackTrace()) {
+                final String name = frame.getClassName();
+                if (name.equals(self)
+                        || name.equals("java.lang.Thread")
+                        || name.startsWith("java.")
+                        || name.startsWith("javax.")
+                        || name.startsWith("jdk.")
+                        || name.startsWith("sun.")
+                        || name.startsWith("net.fabricmc.loader.")
+                        || name.startsWith("org.spongepowered.")) {
+                    continue;
+                }
+                return name;
+            }
+        } catch (Throwable ignored) {
+            // 取不到栈就当作认不出桥,交给 INVOKED 兜底
+        }
+        return "";
+    }
+
     /** 调一个入口方法。Fabric 的入口是实例方法,自己 new 一个;静态方法就直接调。 */
     private static void invokeEntrypoint(Class<?> type, String methodName) throws Exception {
+        // 硬保险:同一个 (类, 方法) 只拉起一次。桥类自己实现了入口接口,一旦被
+        // 当成载荷类扫到就会递归再拉一遍真实入口,而 mod 的注册代码不幂等,必崩。
+        // 上面的桥名排除是第一道,这里是最后一道 —— 只要走到这里就不可能重复。
+        final String key = type.getName() + "#" + methodName;
+        synchronized (INVOKED) {
+            if (!INVOKED.add(key)) {
+                System.out.println("[AntiHackerX] 跳过重复入口: " + key);
+                return;
+            }
+        }
+
+        // 诊断用:入口一旦被调两次,mod 自己就会因为"重复初始化"而崩(实测 voicechat
+        // 的 Packet type already registered 就是这个成因)。把每次调用打出来,
+        // 一眼就能看出是"哪个类被调了两次"还是"我们与 Fabric 各调了一次"。
+        System.out.println("[AntiHackerX] 拉起入口: " + type.getName() + "." + methodName);
+
         final Method method = type.getMethod(methodName);
         if (java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
             method.invoke(null);

@@ -6,6 +6,9 @@
  */
 {{PACKAGE_LINE}}
 {{IMPORTS}}
+import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.api.DedicatedServerModInitializer;
+import net.fabricmc.api.ModInitializer;
 import net.fabricmc.loader.api.entrypoint.PreLaunchEntrypoint;
 
 /**
@@ -61,7 +64,8 @@ import net.fabricmc.loader.api.entrypoint.PreLaunchEntrypoint;
  * 自己实例化主类,主类<strong>只能明文</strong>;Fabric 的入口是我们主动调用的,
  * 于是可以整个藏进载荷。</p>
  */
-public final class {{CLASS}} implements PreLaunchEntrypoint {
+public final class {{CLASS}} implements PreLaunchEntrypoint, ModInitializer,
+        ClientModInitializer, DedicatedServerModInitializer {
 
     /**
      * 载荷密钥的三个分片(打包时随机生成,每份产物不同)。
@@ -89,11 +93,39 @@ public final class {{CLASS}} implements PreLaunchEntrypoint {
 
     @Override
     public void onPreLaunch() {
+        // 这个阶段只保证“载荷已装好”(见上面的静态块),**不**拉起任何真实入口。
+        //
+        // 真机教训:voicechat 的客户入口会去注册按键绑定,而那一刻游戏还没初始化,
+        // MinecraftClient.getInstance() 是 null —— 在 preLaunch 拉客户入口直接 NPE。
+        // Fabric 把 client 阶段放在 MinecraftClient 构造期间是有道理的,
+        // 所以我们把四个阶段都注册到本类,由 Fabric 在正确的时机分别回调。
+    }
+
+    /** main 阶段:拉起真实的 ModInitializer */
+    @Override
+    public void onInitialize() {
+        launch("net/fabricmc/api/ModInitializer", "onInitialize");
+    }
+
+    /** client 阶段:拉起真实的 ClientModInitializer(仅客户端会出现) */
+    @Override
+    public void onInitializeClient() {
+        launch("net/fabricmc/api/ClientModInitializer", "onInitializeClient");
+    }
+
+    /** server 阶段:拉起真实的 DedicatedServerModInitializer(仅服务端会出现) */
+    @Override
+    public void onInitializeServer() {
+        launch("net/fabricmc/api/DedicatedServerModInitializer", "onInitializeServer");
+    }
+
+    /** 按接口名找真实入口并调它的方法。入口类名不落盘,靠扫描载荷判定。 */
+    private static void launch(String interfaceName, String methodName) {
         try {
-            final int started = top.h3k4.AhxRuntime.invokeEntrypoints();
+            final int started = top.h3k4.AhxRuntime.invokeEntrypoints(interfaceName, methodName);
             if (started == 0) {
-                // 静默不启动是排查成本最高的一种失败,宁可吵一点
-                throw new IllegalStateException("在产物里没有找到任何 Fabric 入口类");
+                throw new IllegalStateException(
+                        "在产物里没有找到实现了 " + interfaceName + " 的入口类");
             }
         } catch (Throwable problem) {
             throw new IllegalStateException("加壳 MOD 启动失败:" + problem, problem);

@@ -129,8 +129,16 @@ public final class AhxSignature {
         int checked = 0;
         for (int i = 0; i < names.size(); i++) {
             final String name = names.get(i);
-            if (name.endsWith(".class") || name.startsWith("META-INF/")
-                    || name.equals(SIGN_JAR_ENTRY)) {
+            // 与 AhxPacker.isSignedEntry **严格一致**:只校验我们自己产出的两样东西 ——
+            //   1) 加密载荷 top/h3k4/p.dat(整个防护的核心)
+            //   2) 原生库 .so / .dll / .dylib(桥与载荷真正执行的代码)
+            // 其余一概不管:类文件会被平台重写(Paper),资源与元数据会被**启动器**
+            // 重新序列化(Fabric 实测:fabric.mod.json、icon.png 都会变字节)。
+            // 拿它们当“未被篡改”的基准必然误报。
+            final boolean protectedEntry = "top/h3k4/p.dat".equals(name)
+                    || name.endsWith(".so") || name.endsWith(".dll")
+                    || name.endsWith(".dylib");
+            if (!protectedEntry) {
                 // 打包器根本不会把这些写进表里。出现就说明表被人重排过。
                 fail("签名表里有不该出现的条目: " + name);
             }
