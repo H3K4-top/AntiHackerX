@@ -203,13 +203,9 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-22.04
     steps:
-      # 必须排在最前面。两个原因:
-      #   1) 默认的 checkout 会先 `git clean -ffdx`,放在下载产物**之后**会把
-      #      刚下到 dist/ 的产物整个删掉;
-      #   2) 下面要读标签说明当 Release 正文,历史得取全。
+      # 必须排在最前面。默认的 checkout 会先 `git clean -ffdx`,放在下载产物
+      # **之后**会把刚下到 dist/ 的产物整个删掉。
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: actions/download-artifact@v4
         with:
@@ -233,14 +229,26 @@ jobs:
         run: |
           set -eu
           cd dist
-          # 正文优先用**标签说明**:打标签时写的那段(变更点、是否紧急修复)
-          # 才是给人看的,自动生成的提交列表只是备选。GitHub 网页端
-          # "从标签建 Release"也是这个行为。
-          # 注意 git tag 要在仓库目录里查,而当前目录已经 cd 到 dist 了。
-          notes=$(git -C "$GITHUB_WORKSPACE" tag -l --format='%(contents)' "$TAG" || true)
-          # 重跑流水线时不报错:已存在就补传;**并把正文同步成最新的标签说明**
-          # (重跑常常就是为了改说明;而且"标签被删后重推"时可能另一次运行
-          #  先用自动生成的正文把 Release 建出来了,这里顺手纠正)。
+          # 正文优先用**仓库里的发布说明文件** `.github/release-notes/<标签>.md`。
+          #
+          # 为什么不用 `git tag -l --format='%(contents)'` 读标签说明:实测在
+          # Actions 里取不到 ——  checkout 落下来的标签引用读不出内容(拿到的
+          # 是空串,于是静默回退到自动生成的提交列表,谁也没发现)。写进文件
+          # 则完全确定,而且发布说明能进代码评审、进 git 历史。
+          notes=""
+          notes_file="$GITHUB_WORKSPACE/.github/release-notes/$TAG.md"
+          if [ -f "$notes_file" ]; then
+            notes=$(cat "$notes_file")
+          fi
+          # 写明用了哪份正文。这里**必须**显式说一声:上一次就是静默回退到
+          # 自动生成的提交列表,没人发现正文根本不是我们写的那份。
+          if [ -n "$notes" ]; then
+            echo "Release 正文: $notes_file(${#notes} 字符)"
+          else
+            echo "::warning::$notes_file 不存在,Release 正文将自动生成"
+          fi
+          # 重跑流水线时不报错:已存在就补传;**并把正文同步成最新的发布说明**
+          # (重跑常常就是为了改说明)。
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" ./* --clobber
             if [ -n "$notes" ]; then

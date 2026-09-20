@@ -17,6 +17,8 @@
 `check-license-isolation.sh` —— 许可证隔离被破坏时**直接卡住发布**。
 
 - [ ] 试跑:先手动触发一次(`workflow_dispatch`,不发 Release)确认四个 job 都绿
+- [ ] **写发布说明**:` .github/release-notes/<标签>.md`(没有这个文件时
+      Release 正文会退化成自动生成的提交列表)
 - [ ] 再推标签:`git tag -a v1.0.0 -F -` → `git push origin v1.0.0`
 - [ ] 发布后下 win64 的包,在没装 Qt 的机器上解压跑一次
 
