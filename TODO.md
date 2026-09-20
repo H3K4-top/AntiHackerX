@@ -1,6 +1,6 @@
 # AntiHackerX 路线图
 
-> **当前基线:Paper / Bukkit 已彻底跑通** —— 19.5 MB / 4600 类的 GrimAC 加壳后能正常
+> **当前基线:Paper / Bukkit 与 Fabric 均已跑通** —— 19.5 MB / 4600 类的 GrimAC 加壳后能正常
 > 加载、启用、运行。
 >
 > 下面按「平台扩展 → 混淆能力 → 工程化」排。图例:🎯 主线 · 🔬 需要验证 · ⏸ 暂缓
@@ -10,7 +10,7 @@
 | 平台 | 入口声明在哪 | 类加载器 | 单实例硬限制 | 加载时是否要扫类文件 |
 |---|---|---|---|---|
 | **Paper / Bukkit** ✅ | `plugin.yml` → `main:` | `PluginClassLoader` | ✅ 有(`JavaPlugin`) | 否 |
-| **Fabric** 🎯 | `fabric.mod.json` → `entrypoints` | `KnotClassLoader` | 无 | 否,**但 Mixin 靠 JSON 里的类名** |
+| **Fabric** ✅ | `fabric.mod.json` → `entrypoints` | `KnotClassLoader` | 无 | 否,**但 Mixin 靠 JSON 里的类名** |
 | **Forge** | `mods.toml` + `@Mod` 注解 | `TransformingClassLoader` | 无 | ✅ **有:FML 用 ASM 扫全量注解** |
 | **普通 JAR** 🔬 | `MANIFEST.MF` → `Main-Class:` | `AppClassLoader` | 无 | 否 |
 | **Spring Boot** | `MANIFEST.MF` → `Start-Class:` | `LaunchedURLClassLoader` | 无 | ✅ **有:组件扫描 + 自动配置** |
@@ -28,18 +28,18 @@
 - `plugin.yml` 的 `main:` 原样保留(主类名不变,用户明确要求)
 - 明文集合压到「主类 + 主类直接引用 + 其超类型闭包」(GrimAC 上 62 个类 / 4600)
 
-### 🎯 下一步 1:Fabric MOD
+### ✅ 已完成:Fabric MOD
 
 **比 Paper 简单的地方**:没有 `JavaPlugin` 那种单实例硬限制 →
 **不需要改写真实入口类的父类**,桥类只做两件事:装载荷 → 反射调真实入口。
 
-- [ ] `VerifyModule::Kind` 加 `FabricMod`,新增 `FabricBootstrap.java.tmpl`
-- [ ] 入口要按 `entrypoints` 里**实际声明了哪些**来实现:
+- [x] `VerifyModule::Kind` 加 `FabricMod`,新增 `FabricBootstrap.java.tmpl`
+- [x] 入口要按 `entrypoints` 里**实际声明了哪些**来实现:
       `ModInitializer` / `ClientModInitializer` / `DedicatedServerModInitializer`
       (Fabric 只调声明过的,但我们要三个都实现才能通用)
-- [ ] `fabric.mod.json` 的 `entrypoints.*` 改指向我们的入口;
+- [x] `fabric.mod.json` 的 `entrypoints.*` 改指向我们的入口;
       `id` / `version` / `depends` / `environment` 一律不动
-- [ ] 注入目录映射到 **jar 根**(不是 `BOOT-INF/classes`)—— `fabric.mod.json` 在根
+- [x] 注入目录映射到 **jar 根**(不是 `BOOT-INF/classes`)—— `fabric.mod.json` 在根
 
 **最大的坑:Mixin**
 
@@ -47,7 +47,7 @@
       (Fabric fork,与上游共用 `org.spongepowered.asm.mixin.*`;上游
       `org.spongepowered:mixin` 只在 Sponge 仓库)。打包时 javac 的 classpath
       就是界面上的「额外依赖」那一栏,它支持直接给目录(递归找 jar)
-- [ ] 写第一个 mixin 类时注意:**没有 fabric-loom 就没有 refmap**,
+- [x] 写第一个 mixin 类时注意:**没有 fabric-loom 就没有 refmap**,
       所以要用 `targets = "..."` 字符串目标,别用类型化 target,
       否则生产环境重映射会失败
 - `*.mixins.json` 用"包名 + 类名"**字符串**引用 mixin 类,而混淆器会改名
@@ -55,9 +55,27 @@
 - mixin 类**不能被加密**:Mixin 框架用自己的 `MixinService` 从 jar 里直接读字节,
   不走 `Class.forName`
 - 第一阶段最稳方案:**mixin 类一律明文 + 冻结改名**,先跑通不带 mixin 的 mod
-- 验收:用 Fabric API 的示例 mod(命令注册 + 事件监听 + `ServerLifecycleEvents`)全部正常
+- 验收:真实 mod(Simple Voice Chat,含 Mixin)已全部正常。原计划用 Fabric API 的示例 mod(命令注册 + 事件监听 + `ServerLifecycleEvents`)全部正常
 
-### 下一步 2:Forge MOD
+**实测踩到的坑(2026-09-19,真机客户端 1.21.4 + Fabric Loader 0.19.5)**
+
+被测样本是真实 mod:Simple Voice Chat(含 Mixin、自带原生库、用字符串反射挑客户端实现)。
+
+- **入口必须分阶段**:桥类同时注册 `preLaunch` / `main` / `client` / `server`,每个阶段只
+  拉起对应接口的实现。**不能在 `preLaunch` 一次拉完** —— 客户端入口会去注册按键绑定,
+  那一刻 `MinecraftClient.getInstance()` 还是 null,直接 NPE。时机交给 Fabric 决定。
+- **桥类会“自噬”**:桥为实现四阶段回调,自己就实现了 `ModInitializer` 等接口,而候选集是
+  “扫 JAR 里所有类” → 扫到桥自己 → 递归把真实入口再拉一遍 → mod 的注册代码不幂等 →
+  `Packet type ... is already registered` 直接崩。修法两层:
+  ① 用**调用者**认桥(沿栈找调用者;**不能**用包名前缀 —— 模块类会被 NOBF 改名,而桥是
+  冻结明文,两者包名压根不同,前缀比较永远不成立);② 同一 `类#方法` 记账,只拉一次。
+- **类名字符串必须跟着改名走**:`Class.forName("包.类")` 的字面量不随改名更新 → fork 新增
+  `StringClassRefTransformer`(等价 ProGuard 的 `-adaptclassstrings`,只做精确匹配)。
+  该 mod 全 jar 只有 1 处,漏掉就整包起不来。
+- 定义器只对“该包里真有加密类”的包必需;Mixin 自己的加载器管辖的包查不到定义器很正常
+  → 降级为提示,不再抛异常(真需要时 `lookupFor()` 会精确报错)。
+
+### 🎯 下一步 1:Forge MOD
 
 **最难,而且收益最低 —— 建议先做完 Fabric 再评估要不要投入。**
 
@@ -72,7 +90,7 @@
 - ⚠️ **要如实告诉用户**:Forge 上"整包加密"的收益明显低于另两个平台
 - 验收:示例 mod 注册物品/方块 + 事件订阅正常
 
-### 🔬 下一步 3:普通 JAR(桌面应用)
+### 🔬 下一步 2:普通 JAR(桌面应用)
 
 **最简单 —— 而且能去掉一个约束。**
 
@@ -85,7 +103,7 @@
   - [ ] `ServiceLoader`(`META-INF/services/` 里按字符串引用 → 类名要冻结)
 - 验收:Swing 应用 + 一个靠反射的库,加壳前后功能一致
 
-### 下一步 4:Spring Boot
+### 下一步 3:Spring Boot
 
 - 布局是 `BOOT-INF/classes/` + `BOOT-INF/lib/*.jar`(嵌套 jar)
   → 注入要落到 **`BOOT-INF/classes/`**
@@ -192,4 +210,5 @@
 | 有一批"必须不加密"的类 | 平台在载荷就位**之前**就要校验入口类 | 已压到最小(GrimAC 62/4600);名字仍是混淆过的 |
 | Forge 上加密收益偏低 | FML 会扫注解,入口类必须明文 | 见平台矩阵 |
 | AI 欺骗对动态分析无效 | 它只影响"读代码的人或模型" | UI 上写明 |
+| Fabric 上 Mixin 类必须明文 | Mixin 用自己的 `MixinService` 直接读 jar 字节,不走 `Class.forName` | 只冻结改名,不加密 |
 | 原生化明显降性能 | 方法体走 JNI | 只对核心逻辑开 |

@@ -8,9 +8,10 @@
 > Run it on an AntiHackerX-packed JAR and you get **no code at all** — the classes are
 > encrypted into a single payload, and the hot method bodies are machine code inside a `.so`.
 
-A cross-platform (C++ / Qt6) Java protection tool with a GUI, built for **Minecraft plugin
-authors** and **commercial Java software vendors**. No installer and no manual toolchain
-setup: on first launch it fetches the JDK and every build dependency it needs.
+A cross-platform (C++ / Qt6) Java protection tool with a GUI, built for **Minecraft
+plugin and mod authors** and **commercial Java software vendors**. No installer and no
+manual toolchain setup: on first launch it fetches the JDK and every build dependency it
+needs.
 
 ## What it solves
 
@@ -39,8 +40,10 @@ AntiHackerX splits protection into three layers that can be combined freely:
 - 🧬 **Tamper detection** — every non-class entry in the artifact (`p.dat`, `*.so`, config
   files, `plugin.yml`) is covered by an ECDSA-P256 signature; any modification refuses to
   load. The public key lives in the native library, not in a Java constant.
-- 🌐 **First-class Minecraft server support** — detects `plugin.yml` automatically and works
-  around the single-instance constraint of `JavaPlugin`.
+- 🌐 **First-class Minecraft server and mod support** — detects `plugin.yml` automatically and works
+  around the single-instance constraint of `JavaPlugin`. For Fabric mods all four
+  `entrypoints` stages of `fabric.mod.json` are rewritten, so the payload is defined
+  right inside `KnotClassLoader` (no loader replacement, mixin classes frozen plain).
 - 🎨 **Qt6 GUI** — 13 obfuscation switches plus presets, JAR type detection, class scanning
   with per-class selection, live log and progress.
 - 📦 **Zero setup** — the portable JDK, native-obfuscator, jar-obfuscator and the zig
@@ -53,7 +56,7 @@ AntiHackerX splits protection into three layers that can be combined freely:
 | Plain JAR | `Main-Class` in `MANIFEST.MF` | ✅ Full |
 | Spring Boot fat JAR | `BOOT-INF/` | ✅ Full |
 | Minecraft Paper / Bukkit plugin | `plugin.yml` | ✅ Full (dedicated entry template) |
-| Fabric mod | `fabric.mod.json` | ⚠️ Detected only |
+| Fabric mod | `fabric.mod.json` | ✅ Full (all four `entrypoints` stages + Mixin frozen plain) |
 | Forge mod | `mods.toml` / `mcmod.info` | ⚠️ Detected only |
 
 ## How it works

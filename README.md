@@ -8,7 +8,7 @@
 > 反编译 AntiHackerX 处理过的 JAR,你得到的是**没有代码** ——
 > 类被加密进单一载荷,关键方法体是 `.so` 里的机器码。
 
-一个带 GUI 的跨平台(C++ / Qt6)Java 保护工具,面向 **Minecraft 插件作者**与
+一个带 GUI 的跨平台(C++ / Qt6)Java 保护工具,面向 **Minecraft 插件 / 模组作者**与
 **商业 Java 软件作者**。绿色免安装:首次启动自动拉齐 JDK 与全部工具链。
 
 ## 它解决什么问题
@@ -33,7 +33,9 @@ AntiHackerX 把防护拆成三层,可按需组合:
 - 🛡️ **原生化**:走 native-obfuscator 把方法体搬进原生库,同时**交叉编译 Linux + Windows**
 - 🧬 **反篡改**:对产物里全部非类文件(`p.dat` / `*.so` / 配置文件 / `plugin.yml`)
   做 ECDSA-P256 签名校验,被改动就拒绝加载;公钥烧进原生库而非写在 Java 常量里
-- 🌐 **完整支持 Minecraft 服务端**:自动识别 `plugin.yml`,处理 `JavaPlugin` 的单实例硬限制
+- 🌐 **完整支持 Minecraft 服务端与模组**:自动识别 `plugin.yml`,处理 `JavaPlugin` 的单实例硬限制;
+  Fabric 模组则改写 `fabric.mod.json` 的四个 `entrypoints` 阶段,载荷就地定义进
+  `KnotClassLoader`(不换加载器,Mixin 类明文冻结)
 - 🎨 **Qt6 GUI**:13 项混淆开关 + 预设、JAR 类型识别、类扫描与勾选、实时日志与进度
 - 📦 **绿色免安装**:便携版 JDK、native-obfuscator、jar-obfuscator、zig 工具链全部自动下载
 
@@ -44,7 +46,7 @@ AntiHackerX 把防护拆成三层,可按需组合:
 | 普通 JAR | `MANIFEST.MF` 的 `Main-Class` | ✅ 完整 |
 | Spring Boot Fat JAR | `BOOT-INF/` | ✅ 完整 |
 | Minecraft Paper / Bukkit 插件 | `plugin.yml` | ✅ 完整(含专用入口模板) |
-| Fabric MOD | `fabric.mod.json` | ⚠️ 仅识别 |
+| Fabric MOD | `fabric.mod.json` | ✅ 完整(四个 `entrypoints` 阶段 + Mixin 明文冻结) |
 | Forge MOD | `mods.toml` / `mcmod.info` | ⚠️ 仅识别 |
 
 ## 工作原理
@@ -286,9 +288,13 @@ cmake --build . --config Release
 已在**真实商用产物**上验证:19.5 MB / 4600 个类的 Paper 反作弊插件(GrimAC)
 加壳后能正常加载、启用、运行,对一小类 36 KB 的插件也能秒级完成。
 
+Fabric 侧同样在**真实 mod** 上验证:Simple Voice Chat(含 Mixin 与自带原生库)
+加壳后在 Minecraft 1.21.4 + Fabric Loader 0.19.5 客户端上完成四个入口阶段的拉起。
+
 - ✅ 11 步加壳流水线端到端跑通
 - ✅ 类加密(AES-256-GCM + 3 分片密钥 + 每包定义器),主类与直接超类型链明文
 - ✅ 桥类方案绕开 `JavaPlugin` 的单实例硬限制
+- ✅ Fabric 模组:四阶段入口桥 + Mixin 明文冻结 + 类名字符串同步改写
 - ✅ 产物命名每份随机(修复了两个加壳插件共存时 bootstrap 加载器 `LinkageError`)
 - ✅ 反篡改:ECDSA-P256 签名校验(`p.dat` / `*.so` / `plugin.yml` 等全部非类文件)
 - ✅ 13 项混淆选项 + 预设 + 类扫描 GUI
