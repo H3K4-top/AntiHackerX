@@ -203,6 +203,14 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-22.04
     steps:
+      # 必须排在最前面。两个原因:
+      #   1) 默认的 checkout 会先 `git clean -ffdx`,放在下载产物**之后**会把
+      #      刚下到 dist/ 的产物整个删掉;
+      #   2) 下面要读标签说明当 Release 正文,历史得取全。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -216,6 +224,7 @@ jobs:
           sha256sum *.tar.gz *.zip *.jar > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
+      # 标签说明要当 Release 正文用,所以必须把 tag 取下来(见上面 checkout 的注释)
       - name: 建 Release 并上传产物
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -224,9 +233,17 @@ jobs:
         run: |
           set -eu
           cd dist
+          # 正文优先用**标签说明**:打标签时写的那段(变更点、是否紧急修复)
+          # 才是给人看的,自动生成的提交列表只是备选。GitHub 网页端
+          # "从标签建 Release"也是这个行为。
+          # 注意 git tag 要在仓库目录里查,而当前目录已经 cd 到 dist 了。
+          notes=$(git -C "$GITHUB_WORKSPACE" tag -l --format='%(contents)' "$TAG" || true)
           # 重跑流水线时不报错:已存在就补传
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" ./* --clobber
+          elif [ -n "$notes" ]; then
+            printf '%s\n' "$notes" > "$RUNNER_TEMP/notes.md"
+            gh release create "$TAG" ./* --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
           else
             gh release create "$TAG" ./* --title "$TAG" --generate-notes
           fi
