@@ -247,23 +247,45 @@ jobs:
           else
             echo "::warning::$notes_file 不存在,Release 正文将自动生成"
           fi
-          # 重跑流水线时不报错:已存在就补传;**并把正文同步成最新的发布说明**
-          # (重跑常常就是为了改说明)。
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" ./* --clobber
+          # 一次"建/补"动作。已存在就补传产物,并把正文同步成最新的发布说明
+          # (重跑常常就是为了改说明)。--draft=false 显式要求发布态。
+          publish() {
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release upload "$TAG" ./* --clobber
+            elif [ -n "$notes" ]; then
+              printf '%s\n' "$notes" > "$RUNNER_TEMP/notes.md"
+              gh release create "$TAG" ./* --title "$TAG" \
+                --notes-file "$RUNNER_TEMP/notes.md" --draft=false
+            else
+              gh release create "$TAG" ./* --title "$TAG" \
+                --generate-notes --draft=false
+            fi
             if [ -n "$notes" ]; then
               printf '%s\n' "$notes" > "$RUNNER_TEMP/notes.md"
               gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
             fi
-          elif [ -n "$notes" ]; then
-            printf '%s\n' "$notes" > "$RUNNER_TEMP/notes.md"
-            gh release create "$TAG" ./* --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
-          else
-            gh release create "$TAG" ./* --title "$TAG" --generate-notes
+          }
+
+          # 自检 + 自愈。这里**必须**再查一次:
+          # 删标签会让 GitHub 把对应的 Release 一并删掉(产物也没了),而那次
+          # 删除可能是异步生效的 —— 于是并发的那次运行照样报成功,留下一个
+          # "流水线全绿,Release 却不存在"的结果。查出来就重做一遍,还不行就让
+          # 任务失败,绝不允许静默成功。
+          ok=0
+          publish
+          for attempt in 1 2; do
+            if [ "$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null || echo error)" = "false" ]; then
+              ok=1
+              break
+            fi
+            echo "::warning::第 $attempt 次发布自检未通过,重试"
+            gh release edit "$TAG" --draft=false >/dev/null 2>&1 || true
+            publish
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::Release $TAG 未能创建成功(自检两次都没过)"
+            exit 1
           fi
-          # 收尾自检:确认 Release **真的**存在、不是草稿、产物齐。
-          # 出现过"发布步骤退出码 0 但 Release 没了"的情况(标签被删时 GitHub
-          # 会把 Release 一并删掉,而并发的那次运行仍然报成功)—— 不查就发现不了。
           gh release view "$TAG" --json tagName,isDraft,url,assets \
             --jq '"Release OK: \(.url)  草稿=\(.isDraft)  产物数=\(.assets|length)"'
           echo "https://github.com/$GH_REPO/releases/tag/$TAG"
