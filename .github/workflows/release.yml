@@ -238,9 +238,15 @@ jobs:
           # "从标签建 Release"也是这个行为。
           # 注意 git tag 要在仓库目录里查,而当前目录已经 cd 到 dist 了。
           notes=$(git -C "$GITHUB_WORKSPACE" tag -l --format='%(contents)' "$TAG" || true)
-          # 重跑流水线时不报错:已存在就补传
+          # 重跑流水线时不报错:已存在就补传;**并把正文同步成最新的标签说明**
+          # (重跑常常就是为了改说明;而且"标签被删后重推"时可能另一次运行
+          #  先用自动生成的正文把 Release 建出来了,这里顺手纠正)。
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" ./* --clobber
+            if [ -n "$notes" ]; then
+              printf '%s\n' "$notes" > "$RUNNER_TEMP/notes.md"
+              gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+            fi
           elif [ -n "$notes" ]; then
             printf '%s\n' "$notes" > "$RUNNER_TEMP/notes.md"
             gh release create "$TAG" ./* --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
